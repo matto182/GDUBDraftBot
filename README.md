@@ -50,6 +50,8 @@ What happens after:
 
 The bot will continuously update one message in this channel
 That message is the main draft interface
+
+
 Select Team A Voice Channel
 
 This is the voice channel where Team A players will be moved after the draft.
