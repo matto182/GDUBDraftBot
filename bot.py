@@ -1541,6 +1541,16 @@ async def adminboard(interaction: discord.Interaction):
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
+    if not getattr(bot, "already_synced_commands", False):
+        bot.already_synced_commands = True
+
+        for guild in bot.guilds:
+            try:
+                await bot.tree.sync(guild=guild)
+                print(f"Synced commands to {guild.name}")
+            except Exception as e:
+                print(f"Failed to sync commands to {guild.name}: {e}")
+
     if getattr(bot, "already_posted_board", False):
         return
 
