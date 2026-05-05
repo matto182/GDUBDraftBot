@@ -11,6 +11,7 @@ This guide walks you through everything needed to get the bot working in your Di
 1. Add the Bot to Your Server
 
 Open your bot invite link in a browser.
+https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=16985216&integration_type=0&scope=bot
 
 Select the server you want to add the bot to
 Click Authorize
