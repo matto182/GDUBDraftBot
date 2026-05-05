@@ -2,12 +2,20 @@ import discord
 import sqlite3
 import random
 from discord import app_commands
+import asyncio
+import time
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
 
 
-TOKEN = "MTUwMDczNDExNzUzMTIyNjExMg.G2leQm.3x7F2uGF1bd_TXdZk0r6q-qJ2QKXvUScbwkVU4"
+
 GUILD_ID = 1299942838238314547  # number, no quotes
 DRAFT_CHANNEL_ID = 1488002424676548648  # number, no quotes
 DB_FILE = "players.db"
+last_signup_time = None
 
 
 
@@ -448,6 +456,24 @@ class DraftBoardView(discord.ui.View):
         result = await volunteer_captain(interaction, silent=True)
         if result:
             await refresh_board(interaction)
+    @discord.ui.button(label="Start Draft", style=discord.ButtonStyle.success, custom_id="draft_start")
+    async def start_draft_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can start the draft.",
+                ephemeral=True
+            )
+            return
+
+        if len(lobby) != 16:
+            await interaction.response.send_message(
+                f"Need exactly 16 players. Current: {len(lobby)}/16",
+                ephemeral=True
+            )
+            return
+
+        # Reuse your existing logic
+        await run_startdraft(interaction)
     @discord.ui.button(label="Pick Player", style=discord.ButtonStyle.success, custom_id="draft_pick_player")
     async def pick_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not captain_draft:
@@ -530,13 +556,16 @@ async def post_new_draft_board(guild_id):
 
     last_board_message_id = message.id
 async def signup_player(interaction: discord.Interaction, silent=False):
+    global last_signup_time  # ✅ must be at top
+
     user_id = interaction.user.id
+
     if captain_draft or draft_result:
-      await interaction.response.send_message(
+        await interaction.response.send_message(
             "A draft is already active. Wait for Reset Draft before signing up.",
             ephemeral=True
         )
-      return False
+        return False
 
     if user_id not in players:
         await interaction.response.send_message("Use `/name` first.", ephemeral=True)
@@ -558,6 +587,8 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         lobby.append(user_id)
     else:
         waiting_room.append(user_id)
+
+    last_signup_time = time.time()  # ✅ only set once here
 
     if silent:
         await interaction.response.defer()
@@ -757,15 +788,15 @@ def optimize_team_roles(team):
     Tries to fill the standard comp while respecting player priority.
     """
     desired_slots = [
-        ["Frontline"],
-        ["Lyssa/Flex Derv"],
-        MIDLINE_ROLES,
-        MIDLINE_ROLES,
-        ["Prot Monk"],
-        ["Heal Monk"],
-        ["Support/Flag (8)"],
-        FRONTLINE_ROLES | MIDLINE_ROLES,
-    ]
+    ["Frontline"],
+    ["Frontline"],
+    ["Lyssa/Flex Derv"],
+    MIDLINE_ROLES,
+    MIDLINE_ROLES,
+    ["Prot Monk"],
+    ["Heal Monk"],
+    ["Support/Flag (8)"],
+]
 
     unassigned = [user_id for user_id, _ in team]
     optimized = []
@@ -800,62 +831,157 @@ def count_assigned(team, role_set):
     return len([1 for _, role in team if role in role_set])
 
 
+def get_priority_role_for_slot(player_id, desired_roles):
+    player_roles = players[player_id]["roles"]
+
+    for role in player_roles:
+        if role in desired_roles:
+            return role
+
+    return None
+
+
+def assign_team_roles_for_score(team_players):
+    desired_slots = [
+        ["Frontline"],
+        ["Lyssa/Flex Derv"],
+        MIDLINE_ROLES,
+        MIDLINE_ROLES,
+        ["Prot Monk"],
+        ["Heal Monk"],
+        ["Support/Flag (8)"],
+        FRONTLINE_ROLES | MIDLINE_ROLES,
+    ]
+
+    unassigned = team_players[:]
+    assigned = []
+
+    for desired_roles in desired_slots:
+        candidates = []
+
+        for user_id in unassigned:
+            role = get_priority_role_for_slot(user_id, desired_roles)
+
+            if role:
+                candidates.append((
+                    user_id,
+                    role,
+                    role_priority_index(user_id, role)
+                ))
+
+        if candidates:
+            best_priority = min(c[2] for c in candidates)
+            best_candidates = [c for c in candidates if c[2] == best_priority]
+            picked_id, assigned_role, _priority = random.choice(best_candidates)
+
+            assigned.append((picked_id, assigned_role))
+            unassigned.remove(picked_id)
+
+    for user_id in unassigned:
+        assigned.append((user_id, assign_fallback_role(user_id)))
+
+    return assigned
+
+
+def score_team(team):
+    score = 0
+    assigned_roles = [role for _user_id, role in team]
+
+    # Required backline roles
+    required_roles = ["Prot Monk", "Heal Monk", "Support/Flag (8)"]
+
+    for role in required_roles:
+        count = assigned_roles.count(role)
+
+        if count == 0:
+            score += 1000
+        elif count > 1:
+            score += 200 * (count - 1)
+
+    # Frontline target: exactly 2
+    frontline_count = assigned_roles.count("Frontline")
+
+    if frontline_count < 2:
+        score += 700 * (2 - frontline_count)
+    elif frontline_count > 2:
+        score += 300 * (frontline_count - 2)
+
+    # Flex requirement
+    flex_count = assigned_roles.count("Lyssa/Flex Derv")
+    if flex_count == 0:
+        score += 350
+    elif flex_count > 1:
+        score += 150 * (flex_count - 1)
+
+    # Midline count target: 2 or 3 is good
+    mid_count = len([r for r in assigned_roles if r in MIDLINE_ROLES])
+
+    if mid_count < 2:
+        score += 400 * (2 - mid_count)
+    elif mid_count > 3:
+        score += 150 * (mid_count - 3)
+
+    # Penalize people playing lower-priority roles
+    for user_id, assigned_role in team:
+        priority = role_priority_index(user_id, assigned_role)
+
+        if priority == 0:
+            score += 0
+        elif priority == 1:
+            score += 15
+        elif priority == 2:
+            score += 40
+        elif priority == 3:
+            score += 90
+        elif priority == 4:
+            score += 160
+        else:
+            score += 300
+
+    return score
+
+
+def score_match(team_a, team_b):
+    score_a = score_team(team_a)
+    score_b = score_team(team_b)
+
+    # Penalize uneven team quality
+    balance_penalty = abs(score_a - score_b)
+
+    return score_a + score_b + balance_penalty
+
+
 def generate_random_teams():
-    team_a = []
-    team_b = []
-    used = set()
+    best_result = None
+    best_score = None
 
-    teams = [team_a, team_b]
+    attempts = 1500
 
-    # Desired build order:
-    # Frontline
-    # Flex
-    # Midline
-    # Midline
-    # Prot
-    # Heal
-    # Support/Flag
-    # Extra Front/Mid
+    for _ in range(attempts):
+        shuffled = lobby[:]
+        random.shuffle(shuffled)
 
-    # 1 hard frontline each
-    for team in teams:
-        pick_for_role(team, used, ["Frontline"])
+        raw_team_a = shuffled[:8]
+        raw_team_b = shuffled[8:]
 
-    # 1 flex each
-    for team in teams:
-        pick_for_role(team, used, ["Lyssa/Flex Derv"])
+        team_a = assign_team_roles_for_score(raw_team_a)
+        team_b = assign_team_roles_for_score(raw_team_b)
 
-    # 2 midline each
-    for team in teams:
-        while count_assigned(team, MIDLINE_ROLES) < 2:
-            if not pick_for_role(team, used, MIDLINE_ROLES):
+        score = score_match(team_a, team_b)
+
+        if best_score is None or score < best_score:
+            best_score = score
+            best_result = (team_a, team_b)
+
+            # Perfect enough, stop early
+            if best_score <= 50:
                 break
 
-    # Exact backline slots
-    for team in teams:
-        pick_for_role(team, used, ["Prot Monk"])
-        pick_for_role(team, used, ["Heal Monk"])
-        pick_for_role(team, used, ["Support/Flag (8)"])
-
-    # Slot 8: extra hard frontline first, otherwise midline
-    for team in teams:
-        if not pick_for_role(team, used, ["Frontline"]):
-            pick_for_role(team, used, MIDLINE_ROLES)
-
-    # Emergency fill if any slot failed
-    remaining = [p for p in lobby if p not in used]
-    random.shuffle(remaining)
-
-    for p in remaining:
-        if len(team_a) < 8:
-            team_a.append((p, assign_fallback_role(p)))
-            used.add(p)
-        elif len(team_b) < 8:
-            team_b.append((p, assign_fallback_role(p)))
-            used.add(p)
+    team_a, team_b = best_result
 
     formation = {
-        "front": "Frontline / Flex / 2 Midline / Prot / Heal / Support / Extra Front-Mid"
+        "front": "Smart balanced",
+        "score": best_score
     }
 
     return team_a, team_b, formation
@@ -994,6 +1120,32 @@ async def move_teams_to_voice(interaction: discord.Interaction):
         msg += "\n\nCould not move:\n" + "\n".join(failed)
 
     await interaction.response.send_message(msg, ephemeral=True)
+async def wipe_lobby(interaction: discord.Interaction, silent=False):
+    global lobby, waiting_room, votes, captain_volunteers
+    global draft_result, captain_draft, final_team_a, final_team_b
+    global last_signup_time
+
+    lobby.clear()
+    waiting_room.clear()
+    votes.clear()
+    captain_volunteers.clear()
+
+    draft_result = None
+    captain_draft = None
+    final_team_a = []
+    final_team_b = []
+
+    last_signup_time = None
+
+    if silent:
+        await interaction.response.defer()
+    else:
+        await interaction.response.send_message(
+            "Lobby completely wiped.",
+            ephemeral=True
+        )
+
+    await post_new_draft_board(interaction.guild.id)    
 class AdminDraftView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -1008,6 +1160,16 @@ class AdminDraftView(discord.ui.View):
             return
 
         await move_teams_to_voice(interaction)
+    @discord.ui.button(label="Wipe Lobby", style=discord.ButtonStyle.danger)
+    async def wipe_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can wipe the lobby.",
+                ephemeral=True
+            )
+            return
+
+        await wipe_lobby(interaction, silent=True)    
     @discord.ui.button(label="Reset Draft", style=discord.ButtonStyle.danger)
     async def reset_draft_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_draft_admin(interaction):
@@ -1016,7 +1178,7 @@ class AdminDraftView(discord.ui.View):
                 ephemeral=True
             )
             return
-
+    
         await reset_draft_only(interaction, silent=True)
         await post_new_draft_board(interaction.guild.id)
         
@@ -1225,7 +1387,37 @@ class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
+async def inactivity_check_loop(self):
+    await self.wait_until_ready()
 
+    while not self.is_closed():
+        await asyncio.sleep(60)  # check every minute
+
+        global last_signup_time
+
+        if not last_signup_time:
+            continue
+
+        elapsed = time.time() - last_signup_time
+
+        if elapsed >= 7200:  # 2 hours
+            print("Auto-wiping lobby due to inactivity.")
+
+            lobby.clear()
+            waiting_room.clear()
+            votes.clear()
+            captain_volunteers.clear()
+
+            global draft_result, captain_draft, final_team_a, final_team_b
+
+            draft_result = None
+            captain_draft = None
+            final_team_a = []
+            final_team_b = []
+            last_signup_time = None
+
+            for guild in self.guilds:
+                await post_new_draft_board(guild.id)
     async def setup_hook(self):
         init_db()
         load_players()
@@ -1235,9 +1427,20 @@ class MyBot(discord.Client):
         await self.tree.sync(guild=guild)
 
         self.add_view(DraftBoardView())
+        self.loop.create_task(self.inactivity_check_loop())
 
 
 bot = MyBot()
+@bot.tree.command(name="wipelobby", description="Completely wipe the lobby.")
+async def wipelobby(interaction: discord.Interaction):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can wipe the lobby.",
+            ephemeral=True
+        )
+        return
+
+    await wipe_lobby(interaction)
 @bot.tree.command(name="setup", description="Run the draft bot setup wizard.")
 async def setup(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
@@ -1254,45 +1457,53 @@ async def setup(interaction: discord.Interaction):
     )
 @bot.tree.command(name="filltest", description="Fill lobby with test players.")
 async def filltest(interaction: discord.Interaction):
-    global lobby
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can use this.",
+            ephemeral=True
+        )
+        return
+
+    global lobby, waiting_room, votes, captain_volunteers
+    global draft_result, captain_draft, final_team_a, final_team_b, last_signup_time
 
     lobby.clear()
+    waiting_room.clear()
     votes.clear()
     captain_volunteers.clear()
 
-    test_lobby = [
-        ("Player1",  ["Frontline", "Lyssa/Flex Derv", "Mesmer"]),
-        ("Player2",  ["Frontline", "Lyssa/Flex Derv", "Ranger"]),
-        ("Player3",  ["Mesmer", "Elementalist", "Necromancer"]),
-        ("Player4",  ["Elementalist", "Necromancer", "Ranger"]),
-        ("Player5",  ["Prot Monk", "Heal Monk", "Support/Flag (8)"]),
-        ("Player6",  ["Heal Monk", "Prot Monk", "Support/Flag (8)"]),
-        ("Player7",  ["Support/Flag (8)", "Heal Monk", "Prot Monk"]),
-        ("Player8",  ["Frontline", "Mesmer", "Ranger"]),
+    draft_result = None
+    captain_draft = None
+    final_team_a = []
+    final_team_b = []
 
-        ("Player9",  ["Frontline", "Lyssa/Flex Derv", "Elementalist"]),
-        ("Player10", ["Frontline", "Lyssa/Flex Derv", "Necromancer"]),
-        ("Player11", ["Mesmer", "Elementalist", "Ranger"]),
-        ("Player12", ["Elementalist", "Necromancer", "Mesmer"]),
-        ("Player13", ["Prot Monk", "Heal Monk", "Support/Flag (8)"]),
-        ("Player14", ["Heal Monk", "Prot Monk", "Support/Flag (8)"]),
-        ("Player15", ["Support/Flag (8)", "Heal Monk", "Prot Monk"]),
-        ("Player16", ["Frontline", "Necromancer", "Ranger"]),
+    role_pool = [
+        "Frontline",
+        "Lyssa/Flex Derv",
+        "Mesmer",
+        "Elementalist",
+        "Necromancer",
+        "Ranger",
+        "Prot Monk",
+        "Heal Monk",
+        "Support/Flag (8)"
     ]
 
-    for i, (ign, roles) in enumerate(test_lobby):
+    for i in range(16):
         fake_id = 100000 + i
 
         players[fake_id] = {
-            "discord_name": ign,
-            "ign": ign,
-            "roles": roles
+            "discord_name": f"TestUser{i+1}",
+            "ign": f"Player{i+1}",
+            "roles": random.sample(role_pool, 3)
         }
 
         lobby.append(fake_id)
 
+    last_signup_time = time.time()
+
     await interaction.response.send_message(
-        "Test lobby filled with 16 fake players using 3 roles each.",
+        "Test lobby filled with 16 players.",
         ephemeral=True
     )
 
@@ -1491,10 +1702,9 @@ async def start_captain_draft(interaction: discord.Interaction):
     )
 
     await post_new_draft_board(interaction.guild.id)
-@bot.tree.command(name="startdraft", description="Start the draft once the lobby has 16 players.")
-async def startdraft(interaction: discord.Interaction):
-    global draft_result
-    global draft_result, final_team_a, final_team_b
+
+async def run_startdraft(interaction: discord.Interaction):
+    global draft_result, captain_draft, final_team_a, final_team_b
 
     if len(lobby) != 16:
         await interaction.response.send_message(
@@ -1508,35 +1718,32 @@ async def startdraft(interaction: discord.Interaction):
 
     if captain_votes > random_votes:
         await start_captain_draft(interaction)
-        return       
+        return
 
     team_a, team_b, formation = generate_random_teams()
+
     final_team_a = team_a
     final_team_b = team_b
 
     draft_result = (
-        f"**Mode:** Random Draft\n"
-        f"**Formation Target:** Frontline / Flex / 2 Midline / Prot / Heal / Support / Extra Front-Mid\n\n"
-        f"### Team A\n"
+        "**Mode:** Random Draft\n\n"
+        "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"
+        f"**Balancing Score:** {formation['score']} lower is better\n\n"
+        "### Team A\n"
         f"{team_text(team_a)}\n\n"
-        f"### Team B\n"
+        "### Team B\n"
         f"{team_text(team_b)}"
     )
 
-    await interaction.response.send_message("Random draft generated. Board updated.", ephemeral=True)
+    await interaction.response.send_message("Draft started.", ephemeral=True)
 
-    channel = bot.get_channel(DRAFT_CHANNEL_ID)
-    if channel and last_board_message_id:
-        try:
-            board_message = await channel.fetch_message(last_board_message_id)
-            await board_message.edit(
-                embed=build_draft_board_embed(),
-                view=DraftBoardView()
-            )
-        except Exception as e:
-            print(f"Failed to update board after draft: {e}")
+    await post_new_draft_board(interaction.guild.id)
 
 
+@bot.tree.command(name="startdraft", description="Start the draft once the lobby has 16 players.")
+async def startdraft(interaction: discord.Interaction):
+    await run_startdraft(interaction)
+    
 @bot.tree.command(name="resetlobby", description="Reset the lobby.")
 async def resetlobby(interaction: discord.Interaction):
     global draft_result
