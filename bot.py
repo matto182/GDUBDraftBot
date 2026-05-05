@@ -12,8 +12,7 @@ TOKEN = os.getenv("TOKEN")
 
 
 
-GUILD_ID = 1299942838238314547  # number, no quotes
-DRAFT_CHANNEL_ID = 1488002424676548648  # number, no quotes
+
 DB_FILE = "players.db"
 last_signup_time = None
 
@@ -1422,9 +1421,7 @@ async def inactivity_check_loop(self):
         init_db()
         load_players()
 
-        guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
+        await self.tree.sync()
 
         self.add_view(DraftBoardView())
         self.loop.create_task(self.inactivity_check_loop())
