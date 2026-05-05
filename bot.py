@@ -1546,8 +1546,12 @@ async def on_ready():
 
         for guild in bot.guilds:
             try:
-                await bot.tree.sync(guild=guild)
-                print(f"Synced commands to {guild.name}")
+                guild_obj = discord.Object(id=guild.id)
+
+                bot.tree.copy_global_to(guild=guild_obj)
+                synced = await bot.tree.sync(guild=guild_obj)
+
+                print(f"Synced {len(synced)} commands to {guild.name}")
             except Exception as e:
                 print(f"Failed to sync commands to {guild.name}: {e}")
 
