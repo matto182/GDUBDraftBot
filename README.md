@@ -7,8 +7,14 @@ SETUP
 GW1 GvG Draft Bot — Full Setup Guide
 
 This guide walks you through everything needed to get the bot working in your Discord server.
+Here are the recommended requirements before you begin setting up the bot in your server.
+1. A text channel where people can view the LobbyBoard.
+2. Two voice channels for Team A and Team B to use.
+3. A Bot role in the discord with permission to view all channels, move members, read messages, send messages, and manage messages.
+4. An officer or scrim organizer role in the discord for organizers to have permission to kick players from the draft, move players to their assigned voice channel, start the draft, reset the draft, and reset the lobby,
 
-1. Add the Bot to Your Server
+  Installation and setup.
+  1. Add the Bot to Your Server
 
 Open your bot invite link in a browser.
 https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=16985216&integration_type=0&scope=bot
