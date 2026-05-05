@@ -17,7 +17,7 @@ Here are the recommended requirements before you begin setting up the bot in you
   1. Add the Bot to Your Server
 
 Open your bot invite link in a browser.
-https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=16985216&integration_type=0&scope=bot
+[https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=16985216&integration_type=0&scope=bot](https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=2252076856109184&integration_type=0&scope=bot+applications.commands)
 
 Select the server you want to add the bot to
 Click Authorize
