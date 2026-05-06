@@ -71,7 +71,9 @@ def init_db():
     """)
 
     try:
-        cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
+        cursor.execute(
+            "ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER"
+        )
     except sqlite3.OperationalError:
         pass
 
