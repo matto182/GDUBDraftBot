@@ -65,9 +65,37 @@ def init_db():
             draft_channel_id INTEGER,
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
-            admin_role_id INTEGER
+            admin_role_id INTEGER,
+            board_message_id INTEGER
         )
     """)
+
+    try:
+        cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lobby_state (
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            area TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS guild_runtime_state (
+            guild_id INTEGER PRIMARY KEY,
+            last_signup_time REAL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+except sqlite3.OperationalError:
+    pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS lobby_state (
@@ -141,7 +169,8 @@ def get_guild_config(guild_id):
             draft_channel_id,
             team_a_voice_channel_id,
             team_b_voice_channel_id,
-            admin_role_id
+            admin_role_id,
+            board_message_id
         FROM guild_config
         WHERE guild_id = ?
     """, (guild_id,))
@@ -157,7 +186,20 @@ def get_guild_config(guild_id):
         "team_a_voice_channel_id": row[1],
         "team_b_voice_channel_id": row[2],
         "admin_role_id": row[3],
+        "board_message_id": row[4],
     }
+def save_board_message_id(guild_id, board_message_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE guild_config
+        SET board_message_id = ?
+        WHERE guild_id = ?
+    """, (board_message_id, guild_id))
+
+    conn.commit()
+    conn.close()
 def save_player(discord_id, discord_name, ign, roles):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -612,8 +654,6 @@ async def refresh_board(interaction: discord.Interaction):
 
 
 async def post_new_draft_board(guild_id):
-
-    global last_board_message_id
     load_players()
     load_lobby_state(guild_id)
 
@@ -629,9 +669,11 @@ async def post_new_draft_board(guild_id):
         print("Could not find configured draft channel.")
         return
 
-    if last_board_message_id:
+    old_board_message_id = config.get("board_message_id")
+
+    if old_board_message_id:
         try:
-            old_message = await channel.fetch_message(last_board_message_id)
+            old_message = await channel.fetch_message(old_board_message_id)
             await old_message.delete()
         except discord.NotFound:
             pass
@@ -645,7 +687,7 @@ async def post_new_draft_board(guild_id):
         view=DraftBoardView()
     )
 
-    last_board_message_id = message.id
+    save_board_message_id(guild_id, message.id)
 async def signup_player(interaction: discord.Interaction, silent=False):
     global last_signup_time  # ✅ must be at top
 
