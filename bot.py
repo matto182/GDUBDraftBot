@@ -13,7 +13,8 @@ TOKEN = os.getenv("TOKEN")
 
 
 
-DB_FILE = "players.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "players.db")
 last_signup_time = None
 
 
@@ -65,6 +66,23 @@ def init_db():
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
             admin_role_id INTEGER
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lobby_state (
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            area TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS guild_runtime_state (
+            guild_id INTEGER PRIMARY KEY,
+            last_signup_time REAL
         )
     """)
 
@@ -177,6 +195,73 @@ def load_players():
             "ign": ign,
             "roles": roles_text.split(",") if roles_text else [],
         }
+def save_lobby_state(guild_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM lobby_state WHERE guild_id = ?", (guild_id,))
+
+    for position, user_id in enumerate(lobby):
+        cursor.execute("""
+            INSERT INTO lobby_state (guild_id, user_id, area, position)
+            VALUES (?, ?, ?, ?)
+        """, (guild_id, user_id, "lobby", position))
+
+    for position, user_id in enumerate(waiting_room):
+        cursor.execute("""
+            INSERT INTO lobby_state (guild_id, user_id, area, position)
+            VALUES (?, ?, ?, ?)
+        """, (guild_id, user_id, "waiting_room", position))
+
+    cursor.execute("""
+        INSERT INTO guild_runtime_state (guild_id, last_signup_time)
+        VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            last_signup_time = excluded.last_signup_time
+    """, (guild_id, last_signup_time))
+
+    conn.commit()
+    conn.close()
+
+
+def load_lobby_state(guild_id):
+    global lobby, waiting_room, last_signup_time
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id, area
+        FROM lobby_state
+        WHERE guild_id = ?
+        ORDER BY position ASC
+    """, (guild_id,))
+
+    rows = cursor.fetchall()
+
+    lobby.clear()
+    waiting_room.clear()
+
+    for user_id, area in rows:
+        # Only restore players who still have saved /name and /role profile
+        if user_id not in players:
+            continue
+
+        if area == "lobby":
+            lobby.append(user_id)
+        elif area == "waiting_room":
+            waiting_room.append(user_id)
+
+    cursor.execute("""
+        SELECT last_signup_time
+        FROM guild_runtime_state
+        WHERE guild_id = ?
+    """, (guild_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    last_signup_time = row[0] if row and row[0] else None
 
 def fill_lobby_from_waiting_room():
     while len(lobby) < 16 and waiting_room:
@@ -324,6 +409,7 @@ async def reset_draft_only(interaction: discord.Interaction, silent=False):
     captain_volunteers.clear()
 
     fill_lobby_from_waiting_room()
+    save_lobby_state(interaction.guild.id)
 
     if silent:
         await interaction.response.defer()
@@ -360,6 +446,7 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
         captain_volunteers.remove(user_id)
 
     fill_lobby_from_waiting_room()
+    save_lobby_state(interaction.guild.id)
 
     if not removed:
         await interaction.response.send_message(
@@ -523,7 +610,10 @@ async def refresh_board(interaction: discord.Interaction):
 
 
 async def post_new_draft_board(guild_id):
+
     global last_board_message_id
+    
+    load_lobby_state(guild_id)
 
     config = get_guild_config(guild_id)
 
@@ -587,7 +677,8 @@ async def signup_player(interaction: discord.Interaction, silent=False):
     else:
         waiting_room.append(user_id)
 
-    last_signup_time = time.time()  # ✅ only set once here
+    last_signup_time = time.time()  # only set once here
+    save_lobby_state(interaction.guild.id)
 
     if silent:
         await interaction.response.defer()
@@ -623,7 +714,7 @@ async def drop_player(interaction: discord.Interaction, silent=False):
         await interaction.response.defer()
     else:
         await interaction.response.send_message("You dropped from the lobby/waiting room.", ephemeral=True)
-
+    save_lobby_state(interaction.guild.id)    
     return True
 
 
@@ -693,6 +784,7 @@ async def volunteer_captain(interaction: discord.Interaction, silent=False):
 
 
 async def show_status(interaction: discord.Interaction):
+    load_lobby_state(interaction.guild.id)
     await interaction.response.send_message(
         embed=build_draft_board_embed(),
         ephemeral=True
@@ -1503,7 +1595,7 @@ async def filltest(interaction: discord.Interaction):
         "Test lobby filled with 16 players.",
         ephemeral=True
     )
-
+    save_lobby_state(interaction.guild.id)
     await post_new_draft_board(interaction.guild.id)
 @bot.tree.command(name="pickpanel", description="Open the captain pick panel.")
 async def pickpanel(interaction: discord.Interaction):
@@ -1525,6 +1617,7 @@ async def pickpanel(interaction: discord.Interaction):
     )
 @bot.tree.command(name="adminboard", description="Open the admin draft controls.")
 async def adminboard(interaction: discord.Interaction):
+    load_lobby_state(interaction.guild.id)
     if not is_draft_admin(interaction):
         await interaction.response.send_message(
             "Only draft admins can use this.",
@@ -1565,6 +1658,7 @@ async def on_ready():
 
 @bot.tree.command(name="resetdraft", description="Reset only the draft result and refill lobby from waiting room.")
 async def resetdraft(interaction: discord.Interaction):
+    load_lobby_state(interaction.guild.id)
     await reset_draft_only(interaction)
     
 @bot.tree.command(name="name", description="Register your Guild Wars 1 in-game name.")
@@ -1716,6 +1810,8 @@ async def start_captain_draft(interaction: discord.Interaction):
 
 async def run_startdraft(interaction: discord.Interaction):
     global draft_result, captain_draft, final_team_a, final_team_b
+    
+    load_lobby_state(interaction.guild.id)
 
     if len(lobby) != 16:
         await interaction.response.send_message(
