@@ -225,7 +225,9 @@ def save_lobby_state(guild_id):
 
 
 def load_lobby_state(guild_id):
+
     global lobby, waiting_room, last_signup_time
+    load_players()
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -612,7 +614,7 @@ async def refresh_board(interaction: discord.Interaction):
 async def post_new_draft_board(guild_id):
 
     global last_board_message_id
-    
+    load_players()
     load_lobby_state(guild_id)
 
     config = get_guild_config(guild_id)

@@ -1,0 +1,6 @@
+players.db
+.env
+venv/
+__pycache__/
+bot_local_backup.py
+bot_local_working.py
