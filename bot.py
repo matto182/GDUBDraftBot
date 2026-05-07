@@ -691,45 +691,55 @@ async def post_new_draft_board(guild_id):
 
     save_board_message_id(guild_id, message.id)
 async def signup_player(interaction: discord.Interaction, silent=False):
-    global last_signup_time  # ✅ must be at top
+    global last_signup_time
 
     user_id = interaction.user.id
 
-    if captain_draft or draft_result:
+    if user_id not in players:
         await interaction.response.send_message(
-            "A draft is already active. Wait for Reset Draft before signing up.",
+            "Use `/name` first.",
             ephemeral=True
         )
         return False
 
-    if user_id not in players:
-        await interaction.response.send_message("Use `/name` first.", ephemeral=True)
-        return False
-
     if not players[user_id]["roles"]:
-        await interaction.response.send_message("Use `/role` first.", ephemeral=True)
+        await interaction.response.send_message(
+            "Use `/role` first.",
+            ephemeral=True
+        )
         return False
 
     if user_id in lobby:
-        await interaction.response.send_message("You are already in the active lobby.", ephemeral=True)
+        await interaction.response.send_message(
+            "You are already in the active lobby.",
+            ephemeral=True
+        )
         return False
 
     if user_id in waiting_room:
-        await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
+        await interaction.response.send_message(
+            "You are already in the waiting room.",
+            ephemeral=True
+        )
         return False
 
-    if len(lobby) < 16:
-        lobby.append(user_id)
-    else:
+    # If draft is active OR lobby is full -> waiting room
+    if draft_result or captain_draft or len(lobby) >= 16:
         waiting_room.append(user_id)
+    else:
+        lobby.append(user_id)
 
-    last_signup_time = time.time()  # only set once here
+    last_signup_time = time.time()
+
     save_lobby_state(interaction.guild.id)
 
     if silent:
         await interaction.response.defer()
     else:
-        await interaction.response.send_message("Signup updated.", ephemeral=True)
+        await interaction.response.send_message(
+            "Signup updated.",
+            ephemeral=True
+        )
 
     return True
 
