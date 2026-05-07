@@ -96,29 +96,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-except sqlite3.OperationalError:
-    pass
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lobby_state (
-            guild_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            area TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (guild_id, user_id)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS guild_runtime_state (
-            guild_id INTEGER PRIMARY KEY,
-            last_signup_time REAL
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
 def save_guild_config(
     guild_id,
     draft_channel_id=None,
@@ -691,55 +668,45 @@ async def post_new_draft_board(guild_id):
 
     save_board_message_id(guild_id, message.id)
 async def signup_player(interaction: discord.Interaction, silent=False):
-    global last_signup_time
+    global last_signup_time  # ✅ must be at top
 
     user_id = interaction.user.id
 
-    if user_id not in players:
+    if captain_draft or draft_result:
         await interaction.response.send_message(
-            "Use `/name` first.",
+            "A draft is already active. Wait for Reset Draft before signing up.",
             ephemeral=True
         )
+        return False
+
+    if user_id not in players:
+        await interaction.response.send_message("Use `/name` first.", ephemeral=True)
         return False
 
     if not players[user_id]["roles"]:
-        await interaction.response.send_message(
-            "Use `/role` first.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("Use `/role` first.", ephemeral=True)
         return False
 
     if user_id in lobby:
-        await interaction.response.send_message(
-            "You are already in the active lobby.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("You are already in the active lobby.", ephemeral=True)
         return False
 
     if user_id in waiting_room:
-        await interaction.response.send_message(
-            "You are already in the waiting room.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    # If draft is active OR lobby is full -> waiting room
-    if draft_result or captain_draft or len(lobby) >= 16:
-        waiting_room.append(user_id)
-    else:
+    if len(lobby) < 16:
         lobby.append(user_id)
+    else:
+        waiting_room.append(user_id)
 
-    last_signup_time = time.time()
-
+    last_signup_time = time.time()  # only set once here
     save_lobby_state(interaction.guild.id)
 
     if silent:
         await interaction.response.defer()
     else:
-        await interaction.response.send_message(
-            "Signup updated.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("Signup updated.", ephemeral=True)
 
     return True
 
