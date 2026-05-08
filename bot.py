@@ -4,11 +4,8 @@ import random
 from discord import app_commands
 import asyncio
 import time
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
+last_signup_time = None
 
 from config import (
     TOKEN,
@@ -20,29 +17,6 @@ from config import (
     BACKLINE_ROLES,
 )
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "players.db")
-last_signup_time = None
-
-
-
-ROLES = [
-    "Frontline",
-    "Lyssa/Flex Derv",
-    "Mesmer",
-    "Elementalist",
-    "Necromancer",
-    "Ranger",
-    "Prot Monk",
-    "Heal Monk",
-    "Support/Flag (8)",
-]
-
-FRONTLINE_ROLES = {"Frontline"}
-FLEX_ROLES = {"Lyssa/Flex Derv"}
-MIDLINE_ROLES = {"Mesmer", "Elementalist", "Necromancer", "Ranger"}
-BACKLINE_ROLES = {"Prot Monk", "Heal Monk", "Support/Flag (8)"}
 
 players = {}
 lobby = []
@@ -676,16 +650,9 @@ async def post_new_draft_board(guild_id):
 
     save_board_message_id(guild_id, message.id)
 async def signup_player(interaction: discord.Interaction, silent=False):
-    global last_signup_time  # ✅ must be at top
+    global last_signup_time
 
     user_id = interaction.user.id
-
-    if captain_draft or draft_result:
-        await interaction.response.send_message(
-            "A draft is already active. Wait for Reset Draft before signing up.",
-            ephemeral=True
-        )
-        return False
 
     if user_id not in players:
         await interaction.response.send_message("Use `/name` first.", ephemeral=True)
@@ -703,12 +670,12 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    if len(lobby) < 16:
-        lobby.append(user_id)
-    else:
+    if captain_draft or draft_result or len(lobby) >= 16:
         waiting_room.append(user_id)
+    else:
+        lobby.append(user_id)
 
-    last_signup_time = time.time()  # only set once here
+    last_signup_time = time.time()
     save_lobby_state(interaction.guild.id)
 
     if silent:
@@ -1509,37 +1476,39 @@ class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
-async def inactivity_check_loop(self):
-    await self.wait_until_ready()
 
-    while not self.is_closed():
-        await asyncio.sleep(60)  # check every minute
+    async def inactivity_check_loop(self):
+        await self.wait_until_ready()
 
-        global last_signup_time
+        while not self.is_closed():
+            await asyncio.sleep(60)
 
-        if not last_signup_time:
-            continue
-
-        elapsed = time.time() - last_signup_time
-
-        if elapsed >= 7200:  # 2 hours
-            print("Auto-wiping lobby due to inactivity.")
-
-            lobby.clear()
-            waiting_room.clear()
-            votes.clear()
-            captain_volunteers.clear()
-
+            global last_signup_time
             global draft_result, captain_draft, final_team_a, final_team_b
 
-            draft_result = None
-            captain_draft = None
-            final_team_a = []
-            final_team_b = []
-            last_signup_time = None
+            if not last_signup_time:
+                continue
 
-            for guild in self.guilds:
-                await post_new_draft_board(guild.id)
+            elapsed = time.time() - last_signup_time
+
+            if elapsed >= 7200:
+                print("Auto-wiping lobby due to inactivity.")
+
+                lobby.clear()
+                waiting_room.clear()
+                votes.clear()
+                captain_volunteers.clear()
+
+                draft_result = None
+                captain_draft = None
+                final_team_a = []
+                final_team_b = []
+                last_signup_time = None
+
+                for guild in self.guilds:
+                    save_lobby_state(guild.id)
+                    await post_new_draft_board(guild.id)
+
     async def setup_hook(self):
         init_db()
         load_players()
