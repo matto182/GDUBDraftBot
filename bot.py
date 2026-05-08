@@ -4,8 +4,11 @@ import random
 from discord import app_commands
 import asyncio
 import time
+from state import get_state
 
 last_signup_time = None
+guild_states = {}
+active_guild_id = None
 
 from config import (
     TOKEN,
@@ -60,33 +63,39 @@ def load_players():
 
 
 def save_lobby_state(guild_id):
+    state = get_state(guild_id)
+
     save_lobby_state_to_db(
         guild_id,
-        lobby,
-        waiting_room,
-        last_signup_time
+        state.lobby,
+        state.waiting_room,
+        state.last_signup_time
     )
 
 
 def load_lobby_state(guild_id):
-    global last_signup_time
-
     load_players()
 
-    last_signup_time = load_lobby_state_from_db(
+    state = get_state(guild_id)
+
+    state.last_signup_time = load_lobby_state_from_db(
         guild_id,
         players,
-        lobby,
-        waiting_room
+        state.lobby,
+        state.waiting_room
     )
-def fill_lobby_from_waiting_room():
-    while len(lobby) < 16 and waiting_room:
-        next_player = waiting_room.pop(0)
+def fill_lobby_from_waiting_room(guild_id):
+    state = get_state(guild_id)
 
-        if next_player not in lobby:
-            lobby.append(next_player)
+    while len(state.lobby) < 16 and state.waiting_room:
+        next_player = state.waiting_room.pop(0)
+
+        if next_player not in state.lobby:
+            state.lobby.append(next_player)
             
-def player_label(user_id):
+def player_label(guild_id, user_id):
+    state = get_state(guild_id)
+    captain_draft = state.captain_draft
     p = players.get(user_id)
     if not p:
         return f"<@{user_id}>"
@@ -106,7 +115,9 @@ def player_label(user_id):
 
 
 
-def team_text(team):
+def team_text(guild_id, team):
+    state = get_state(guild_id)
+    captain_draft = state.captain_draft
     lines = []
 
     sorted_team = sorted(team, key=lambda item: role_sort_key(item[1]))
@@ -126,28 +137,46 @@ def team_text(team):
         lines.append(f"{i}. {prefix}**{p['ign']}** — {role}")
 
     return "\n".join(lines)
-def build_draft_board_embed():
+def build_draft_board_embed(guild_id):
+    state = get_state(guild_id)
+
+    lobby = state.lobby
+    waiting_room = state.waiting_room
+    votes = state.votes
+    captain_volunteers = state.captain_volunteers
+    draft_result = state.draft_result
+    captain_draft = state.captain_draft
+
     captain_votes = list(votes.values()).count("captain")
     random_votes = list(votes.values()).count("random")
 
     if lobby:
         lobby_text = ""
+
         for i, user_id in enumerate(lobby, start=1):
             p = players[user_id]
             roles = ", ".join(p["roles"]) if p["roles"] else "No roles set"
+
             lobby_text += f"{i}. **{p['ign']}** — {roles}\n"
     else:
         lobby_text = "No players signed up yet."
+
     if waiting_room:
         waiting_text = ""
+
         for i, user_id in enumerate(waiting_room, start=1):
             p = players[user_id]
             roles = ", ".join(p["roles"]) if p["roles"] else "No roles set"
+
             waiting_text += f"{i}. **{p['ign']}** — {roles}\n"
     else:
         waiting_text = "Waiting room is empty."
+
     if captain_volunteers:
-        captain_text = "\n".join(player_label(p) for p in captain_volunteers)
+        captain_text = "\n".join(
+            player_label(guild_id, p)
+            for p in captain_volunteers
+        )
     else:
         captain_text = "No captain volunteers yet."
 
@@ -164,29 +193,33 @@ def build_draft_board_embed():
         f"Random Draft: **{random_votes}**\n\n"
         f"## Captain Volunteers\n"
         f"{captain_text}"
-        
     )
 
     if captain_draft:
         next_picker = captain_draft.current_picker()
 
         description += "\n\n## Captain Draft\n"
-        description += f"**Team A Captain:** {player_label(captain_draft.captain_a)}\n"
-        description += f"**Team B Captain:** {player_label(captain_draft.captain_b)}\n\n"
+        description += f"**Team A Captain:** {player_label(guild_id, captain_draft.captain_a)}\n"
+        description += f"**Team B Captain:** {player_label(guild_id, captain_draft.captain_b)}\n\n"
 
         if next_picker:
-            description += f"**Current Pick:** {player_label(next_picker)}\n\n"
+            description += f"**Current Pick:** {player_label(guild_id, next_picker)}\n\n"
         else:
             description += "**Draft Complete**\n\n"
 
         description += "### Team A\n"
-        description += team_text(captain_draft.team_a)
+        description += team_text(guild_id, captain_draft.team_a)
+
         description += "\n\n### Team B\n"
-        description += team_text(captain_draft.team_b)
+        description += team_text(guild_id, captain_draft.team_b)
 
         if captain_draft.available:
             description += "\n\n### Available Players\n"
-            description += "\n".join(player_label(p) for p in captain_draft.available)
+
+            description += "\n".join(
+                player_label(guild_id, p)
+                for p in captain_draft.available
+            )
 
     elif draft_result:
         description += f"\n\n## Draft Result\n{draft_result}"
@@ -198,53 +231,49 @@ def build_draft_board_embed():
     )
 
 async def reset_draft_only(interaction: discord.Interaction, silent=False):
-    global draft_result, captain_draft, final_team_a, final_team_b
-    final_team_a = []
-    final_team_b = []
-    captain_draft = None
-    draft_result = None
-    votes.clear()
-    captain_volunteers.clear()
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    fill_lobby_from_waiting_room()
-    save_lobby_state(interaction.guild.id)
+    state.final_team_a = []
+    state.final_team_b = []
+    state.captain_draft = None
+    state.draft_result = None
+    state.votes.clear()
+    state.captain_volunteers.clear()
+
+    fill_lobby_from_waiting_room(guild_id)
+    save_lobby_state(guild_id)
 
     if silent:
         await interaction.response.defer()
     else:
-        await interaction.response.send_message("Draft reset. Lobby refilled from waiting room if slots were open.", ephemeral=True)
+        await interaction.response.send_message(
+            "Draft reset. Lobby refilled from waiting room if slots were open.",
+            ephemeral=True
+        )
 
     return True
-def is_draft_admin(interaction: discord.Interaction):
-    if interaction.user.guild_permissions.administrator:
-        return True
-
-    config = get_guild_config(interaction.guild.id)
-
-    if not config or not config.get("admin_role_id"):
-        return interaction.user.guild_permissions.manage_guild
-
-    admin_role_id = config["admin_role_id"]
-
-    return any(role.id == admin_role_id for role in interaction.user.roles)
 async def kick_from_draft(interaction: discord.Interaction, user_id: int):
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
     removed = False
 
-    if user_id in lobby:
-        lobby.remove(user_id)
+    if user_id in state.lobby:
+        state.lobby.remove(user_id)
         removed = True
 
-    if user_id in waiting_room:
-        waiting_room.remove(user_id)
+    if user_id in state.waiting_room:
+        state.waiting_room.remove(user_id)
         removed = True
 
-    votes.pop(user_id, None)
+    state.votes.pop(user_id, None)
 
-    if user_id in captain_volunteers:
-        captain_volunteers.remove(user_id)
+    if user_id in state.captain_volunteers:
+        state.captain_volunteers.remove(user_id)
 
-    fill_lobby_from_waiting_room()
-    save_lobby_state(interaction.guild.id)
+    fill_lobby_from_waiting_room(guild_id)
+    save_lobby_state(guild_id)
 
     if not removed:
         await interaction.response.send_message(
@@ -254,13 +283,11 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
         return
 
     await interaction.response.send_message(
-        f"Kicked {player_label(user_id)} from the draft.",
+        f"Kicked {player_label(guild_id, user_id)} from the draft.",
         ephemeral=True
     )
 
-    await post_new_draft_board(interaction.guild.id)
-    
-
+    await post_new_draft_board(guild_id)
 
 
 
@@ -294,13 +321,14 @@ async def post_new_draft_board(guild_id):
             print(f"Failed to delete old draft board: {e}")
 
     message = await channel.send(
-        embed=build_draft_board_embed(),
-        view=DraftBoardView(get_view_context())
+        embed=build_draft_board_embed(guild_id),
+        view=DraftBoardView(get_view_context)
     )
 
     save_board_message_id(guild_id, message.id)
 async def signup_player(interaction: discord.Interaction, silent=False):
-    global last_signup_time
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
     user_id = interaction.user.id
 
@@ -312,21 +340,21 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("Use `/role` first.", ephemeral=True)
         return False
 
-    if user_id in lobby:
+    if user_id in state.lobby:
         await interaction.response.send_message("You are already in the active lobby.", ephemeral=True)
         return False
 
-    if user_id in waiting_room:
+    if user_id in state.waiting_room:
         await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    if captain_draft or draft_result or len(lobby) >= 16:
-        waiting_room.append(user_id)
+    if state.captain_draft or state.draft_result or len(state.lobby) >= 16:
+        state.waiting_room.append(user_id)
     else:
-        lobby.append(user_id)
+        state.lobby.append(user_id)
 
-    last_signup_time = time.time()
-    save_lobby_state(interaction.guild.id)
+    state.last_signup_time = time.time()
+    save_lobby_state(guild_id)
 
     if silent:
         await interaction.response.defer()
@@ -337,58 +365,66 @@ async def signup_player(interaction: discord.Interaction, silent=False):
 
 
 async def drop_player(interaction: discord.Interaction, silent=False):
-    user_id = interaction.user.id
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
+    user_id = interaction.user.id
     removed = False
 
-    if user_id in lobby:
-        lobby.remove(user_id)
+    if user_id in state.lobby:
+        state.lobby.remove(user_id)
         removed = True
 
-    if user_id in waiting_room:
-        waiting_room.remove(user_id)
+    if user_id in state.waiting_room:
+        state.waiting_room.remove(user_id)
         removed = True
 
-    votes.pop(user_id, None)
+    state.votes.pop(user_id, None)
 
-    if user_id in captain_volunteers:
-        captain_volunteers.remove(user_id)
+    if user_id in state.captain_volunteers:
+        state.captain_volunteers.remove(user_id)
 
     if not removed:
         await interaction.response.send_message("You are not signed up.", ephemeral=True)
         return False
 
+    save_lobby_state(guild_id)
+
     if silent:
         await interaction.response.defer()
     else:
         await interaction.response.send_message("You dropped from the lobby/waiting room.", ephemeral=True)
-    save_lobby_state(interaction.guild.id)    
+
     return True
 
 
 async def vote_player(interaction: discord.Interaction, mode_value: str, mode_name: str, silent=False):
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
     user_id = interaction.user.id
-    if captain_draft or draft_result:
-       await interaction.response.send_message(
+
+    if state.captain_draft or state.draft_result:
+        await interaction.response.send_message(
             "Voting is locked while a draft is active.",
             ephemeral=True
         )
-       return False
+        return False
 
-    if user_id not in lobby:
+    if user_id not in state.lobby:
         await interaction.response.send_message(
             "Only signed-up players can vote.",
             ephemeral=True
         )
         return False
 
-    votes[user_id] = mode_value
+    state.votes[user_id] = mode_value
 
     if silent:
         await interaction.response.defer()
     else:
         await interaction.response.send_message(
-            f"{player_label(user_id)} voted for **{mode_name}**.",
+            f"{player_label(guild_id, user_id)} voted for **{mode_name}**.",
             ephemeral=True
         )
 
@@ -396,35 +432,39 @@ async def vote_player(interaction: discord.Interaction, mode_value: str, mode_na
 
 
 async def volunteer_captain(interaction: discord.Interaction, silent=False):
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
     user_id = interaction.user.id
-    if captain_draft or draft_result:
-       await interaction.response.send_message(
+
+    if state.captain_draft or state.draft_result:
+        await interaction.response.send_message(
             "Captain volunteering is locked while a draft is active.",
             ephemeral=True
         )
-       return False
+        return False
 
-    if user_id not in lobby:
+    if user_id not in state.lobby:
         await interaction.response.send_message(
             "Only signed-up players can volunteer as captain.",
             ephemeral=True
         )
         return False
 
-    if user_id in captain_volunteers:
+    if user_id in state.captain_volunteers:
         await interaction.response.send_message(
             "You are already volunteered as captain.",
             ephemeral=True
         )
         return False
 
-    captain_volunteers.append(user_id)
+    state.captain_volunteers.append(user_id)
 
     if silent:
         await interaction.response.defer()
     else:
         await interaction.response.send_message(
-            f"{player_label(user_id)} volunteered as captain.",
+            f"{player_label(guild_id, user_id)} volunteered as captain.",
             ephemeral=True
         )
 
@@ -434,7 +474,7 @@ async def volunteer_captain(interaction: discord.Interaction, silent=False):
 async def show_status(interaction: discord.Interaction):
     load_lobby_state(interaction.guild.id)
     await interaction.response.send_message(
-        embed=build_draft_board_embed(),
+        embed=build_draft_board_embed(interaction.guild.id),
         ephemeral=True
     )
 
@@ -444,7 +484,10 @@ async def show_status(interaction: discord.Interaction):
 
 
 async def move_teams_to_voice(interaction: discord.Interaction):
-    config = get_guild_config(interaction.guild.id)
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
+    config = get_guild_config(guild_id)
 
     if not config:
         await interaction.response.send_message(
@@ -473,15 +516,12 @@ async def move_teams_to_voice(interaction: discord.Interaction):
         )
         return
 
-    team_a = None
-    team_b = None
-
-    if captain_draft:
-        team_a = captain_draft.team_a
-        team_b = captain_draft.team_b
-    elif draft_result and final_team_a and final_team_b:
-        team_a = final_team_a
-        team_b = final_team_b
+    if state.captain_draft:
+        team_a = state.captain_draft.team_a
+        team_b = state.captain_draft.team_b
+    elif state.draft_result and state.final_team_a and state.final_team_b:
+        team_a = state.final_team_a
+        team_b = state.final_team_b
     else:
         await interaction.response.send_message(
             "No active draft teams to move.",
@@ -521,23 +561,21 @@ async def move_teams_to_voice(interaction: discord.Interaction):
 
     await interaction.response.send_message(msg, ephemeral=True)
 async def wipe_lobby(interaction: discord.Interaction, silent=False):
-    global lobby, waiting_room, votes, captain_volunteers
-    global draft_result, captain_draft, final_team_a, final_team_b
-    global last_signup_time
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    lobby.clear()
-    waiting_room.clear()
-    votes.clear()
-    captain_volunteers.clear()
+    state.lobby.clear()
+    state.waiting_room.clear()
+    state.votes.clear()
+    state.captain_volunteers.clear()
 
-    draft_result = None
-    captain_draft = None
-    final_team_a = []
-    final_team_b = []
+    state.draft_result = None
+    state.captain_draft = None
+    state.final_team_a = []
+    state.final_team_b = []
+    state.last_signup_time = None
 
-    last_signup_time = None
-
-    save_lobby_state(interaction.guild.id)
+    save_lobby_state(guild_id)
 
     if silent:
         await interaction.response.defer()
@@ -547,22 +585,38 @@ async def wipe_lobby(interaction: discord.Interaction, silent=False):
             ephemeral=True
         )
 
-    await post_new_draft_board(interaction.guild.id) 
+    await post_new_draft_board(guild_id)
+def is_draft_admin(interaction: discord.Interaction):
+    if interaction.user.guild_permissions.administrator:
+        return True
+
+    config = get_guild_config(interaction.guild.id)
+
+    if not config or not config.get("admin_role_id"):
+        return interaction.user.guild_permissions.manage_guild
+
+    admin_role_id = config["admin_role_id"]
+
+    return any(role.id == admin_role_id for role in interaction.user.roles)
 def get_captain_draft():
     return captain_draft
 async def refresh_board(interaction: discord.Interaction):
     await interaction.message.edit(
-        embed=build_draft_board_embed(),
-        view=DraftBoardView(get_view_context())
+        embed=build_draft_board_embed(interaction.guild.id),
+        view=DraftBoardView(get_view_context)
     )
 
-def get_view_context():
-    return SimpleNamespace(
-        players=players,
-        lobby=lobby,
-        waiting_room=waiting_room,
+def get_view_context(guild_id):
+    state = get_state(guild_id)
 
-        get_captain_draft=get_captain_draft,
+    return SimpleNamespace(
+        guild_id=guild_id,
+
+        players=players,
+        lobby=state.lobby,
+        waiting_room=state.waiting_room,
+
+        get_captain_draft=lambda: state.captain_draft,
 
         signup_player=signup_player,
         drop_player=drop_player,
@@ -582,47 +636,48 @@ def get_view_context():
         handle_captain_pick=handle_captain_pick,
     )
 async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
-    global draft_result, captain_draft, final_team_a, final_team_b
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    if not captain_draft:
+    if not state.captain_draft:
         await interaction.response.send_message("No captain draft is active.", ephemeral=True)
         return
 
     picker_id = interaction.user.id
 
-    success, message = captain_draft.pick_player(players, picker_id, picked_id)
+    success, message = state.captain_draft.pick_player(players, picker_id, picked_id)
 
     if not success:
         await interaction.response.send_message(message, ephemeral=True)
         return
 
-    if captain_draft.is_complete():
-        captain_draft.team_a = optimize_team_roles(players, captain_draft.team_a)
-        captain_draft.team_b = optimize_team_roles(players, captain_draft.team_b)
+    if state.captain_draft.is_complete():
+        state.captain_draft.team_a = optimize_team_roles(players, state.captain_draft.team_a)
+        state.captain_draft.team_b = optimize_team_roles(players, state.captain_draft.team_b)
 
-        final_team_a = captain_draft.team_a
-        final_team_b = captain_draft.team_b
+        state.final_team_a = state.captain_draft.team_a
+        state.final_team_b = state.captain_draft.team_b
 
-        draft_result = (
+        state.draft_result = (
             "**Mode:** Captain Draft\n\n"
             "### Team A\n"
-            f"{team_text(final_team_a)}\n\n"
+            f"{team_text(guild_id, state.final_team_a)}\n\n"
             "### Team B\n"
-            f"{team_text(final_team_b)}"
+            f"{team_text(guild_id, state.final_team_b)}"
         )
 
-        captain_draft = None
+        state.captain_draft = None
 
     await interaction.response.defer()
 
-    if captain_draft:
-        next_picker = captain_draft.current_picker()
+    if state.captain_draft:
+        next_picker = state.captain_draft.current_picker()
         if next_picker:
             await interaction.channel.send(
-                f"{player_label(next_picker)}, you are on the clock. Click **Pick Player** on the draft board."
+                f"{player_label(guild_id, next_picker)}, you are on the clock. Click **Pick Player** on the draft board."
             )
 
-    await post_new_draft_board(interaction.guild.id)        
+    await post_new_draft_board(guild_id)    
      
 class MyBot(discord.Client):
     def __init__(self):
@@ -635,31 +690,31 @@ class MyBot(discord.Client):
         while not self.is_closed():
             await asyncio.sleep(60)
 
-            global last_signup_time
-            global draft_result, captain_draft, final_team_a, final_team_b
+            for guild in self.guilds:
+                guild_id = guild.id
+                state = get_state(guild_id)
 
-            if not last_signup_time:
-                continue
+                if not state.last_signup_time:
+                    continue
 
-            elapsed = time.time() - last_signup_time
+                elapsed = time.time() - state.last_signup_time
 
-            if elapsed >= 7200:
-                print("Auto-wiping lobby due to inactivity.")
+                if elapsed >= 7200:
+                    print(f"Auto-wiping lobby due to inactivity for guild {guild_id}.")
 
-                lobby.clear()
-                waiting_room.clear()
-                votes.clear()
-                captain_volunteers.clear()
+                    state.lobby.clear()
+                    state.waiting_room.clear()
+                    state.votes.clear()
+                    state.captain_volunteers.clear()
 
-                draft_result = None
-                captain_draft = None
-                final_team_a = []
-                final_team_b = []
-                last_signup_time = None
+                    state.draft_result = None
+                    state.captain_draft = None
+                    state.final_team_a = []
+                    state.final_team_b = []
+                    state.last_signup_time = None
 
-                for guild in self.guilds:
-                    save_lobby_state(guild.id)
-                    await post_new_draft_board(guild.id)
+                    save_lobby_state(guild_id)
+                    await post_new_draft_board(guild_id)
 
     async def setup_hook(self):
         init_db()
@@ -667,7 +722,7 @@ class MyBot(discord.Client):
 
         await self.tree.sync()
 
-        self.add_view(DraftBoardView(get_view_context()))
+        self.add_view(DraftBoardView(get_view_context))
         self.loop.create_task(self.inactivity_check_loop())
 
 
@@ -694,7 +749,7 @@ async def setup(interaction: discord.Interaction):
     await interaction.response.send_message(
         "Draft bot setup started.\n\nFirst, select the text channel where the draft board should be posted.",
         ephemeral=True,
-        view=SetupWizardView(get_view_context())
+        view=SetupWizardView(get_view_context(interaction.guild.id))
     )
 @bot.tree.command(name="filltest", description="Fill lobby with test players.")
 async def filltest(interaction: discord.Interaction):
@@ -705,18 +760,18 @@ async def filltest(interaction: discord.Interaction):
         )
         return
 
-    global lobby, waiting_room, votes, captain_volunteers
-    global draft_result, captain_draft, final_team_a, final_team_b, last_signup_time
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    lobby.clear()
-    waiting_room.clear()
-    votes.clear()
-    captain_volunteers.clear()
+    state.lobby.clear()
+    state.waiting_room.clear()
+    state.votes.clear()
+    state.captain_volunteers.clear()
 
-    draft_result = None
-    captain_draft = None
-    final_team_a = []
-    final_team_b = []
+    state.draft_result = None
+    state.captain_draft = None
+    state.final_team_a = []
+    state.final_team_b = []
 
     test_lobby = [
         ("Player1",  ["Frontline", "Lyssa/Flex Derv", "Mesmer"]),
@@ -754,18 +809,18 @@ async def filltest(interaction: discord.Interaction):
             roles
         )
 
-        lobby.append(fake_id)
+        state.lobby.append(fake_id)
 
-    last_signup_time = time.time()
+    state.last_signup_time = time.time()
 
-    save_lobby_state(interaction.guild.id)
+    save_lobby_state(guild_id)
 
     await interaction.response.send_message(
         "Test lobby filled with 16 players.",
         ephemeral=True
     )
 
-    await post_new_draft_board(interaction.guild.id)
+    await post_new_draft_board(guild_id)
 @bot.tree.command(name="pickpanel", description="Open the captain pick panel.")
 async def pickpanel(interaction: discord.Interaction):
     if not captain_draft:
@@ -781,7 +836,7 @@ async def pickpanel(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         "Choose a player to pick:",
-        view=CaptainPickView(get_view_context()),
+        view=CaptainPickView(get_view_context(interaction.guild.id)),
         ephemeral=True
     )
 @bot.tree.command(name="adminboard", description="Open the admin draft controls.")
@@ -796,7 +851,7 @@ async def adminboard(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         "Admin draft controls:",
-        view=AdminDraftView(get_view_context()),
+        view=AdminDraftView(get_view_context(interaction.guild.id)),
         ephemeral=True
     )    
 @bot.event
@@ -947,73 +1002,75 @@ async def draftstatus(interaction: discord.Interaction):
 @bot.tree.command(name="draftboard", description="Post the GvG draft board with buttons.")
 async def draftboard(interaction: discord.Interaction):
     await interaction.response.send_message(
-        embed=build_draft_board_embed(),
+        embed=build_draft_board_embed(interaction.guild.id),
         view=DraftBoardView(get_view_context())
     )
 
 async def start_captain_draft(interaction: discord.Interaction):
-    global captain_draft, draft_result
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    if len(captain_volunteers) < 2:
+    if len(state.captain_volunteers) < 2:
         await interaction.response.send_message(
             "Captain Mode won, but there need to be at least 2 captain volunteers.",
             ephemeral=True
         )
         return
 
-    chosen = random.sample(captain_volunteers, 2)
+    chosen = random.sample(state.captain_volunteers, 2)
     random.shuffle(chosen)
 
-    captain_draft = CaptainDraft(lobby, chosen[0], chosen[1])
-    draft_result = None
-    final_team_a = []
-    final_team_b = []
+    state.captain_draft = CaptainDraft(state.lobby, chosen[0], chosen[1])
+    state.draft_result = None
+    state.final_team_a = []
+    state.final_team_b = []
 
     await interaction.response.send_message(
-        f"Captain draft started. First pick: {player_label(captain_draft.current_picker())}. "
+        f"Captain draft started. First pick: {player_label(guild_id, state.captain_draft.current_picker())}. "
         f"Captains should use `/pickpanel` when it is their turn.",
         ephemeral=True
     )
 
-    await post_new_draft_board(interaction.guild.id)
+    await post_new_draft_board(guild_id)
 
 async def run_startdraft(interaction: discord.Interaction):
-    global draft_result, captain_draft, final_team_a, final_team_b
-    
-    load_lobby_state(interaction.guild.id)
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
 
-    if len(lobby) != 16:
+    load_lobby_state(guild_id)
+
+    if len(state.lobby) != 16:
         await interaction.response.send_message(
-            f"Need exactly 16 players to start. Current lobby: {len(lobby)}/16",
+            f"Need exactly 16 players to start. Current lobby: {len(state.lobby)}/16",
             ephemeral=True
         )
         return
 
-    captain_votes = list(votes.values()).count("captain")
-    random_votes = list(votes.values()).count("random")
+    captain_votes = list(state.votes.values()).count("captain")
+    random_votes = list(state.votes.values()).count("random")
 
     if captain_votes > random_votes:
         await start_captain_draft(interaction)
         return
 
-    team_a, team_b, formation = generate_random_teams(players, lobby)
+    team_a, team_b, formation = generate_random_teams(players, state.lobby)
 
-    final_team_a = team_a
-    final_team_b = team_b
+    state.final_team_a = team_a
+    state.final_team_b = team_b
 
-    draft_result = (
+    state.draft_result = (
         "**Mode:** Random Draft\n\n"
         "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"
         f"**Balancing Score:** {formation['score']} lower is better\n\n"
         "### Team A\n"
-        f"{team_text(team_a)}\n\n"
+        f"{team_text(guild_id, team_a)}\n\n"
         "### Team B\n"
-        f"{team_text(team_b)}"
+        f"{team_text(guild_id, team_b)}"
     )
 
     await interaction.response.send_message("Draft started.", ephemeral=True)
 
-    await post_new_draft_board(interaction.guild.id)
+    await post_new_draft_board(guild_id)
 
 
 @bot.tree.command(name="startdraft", description="Start the draft once the lobby has 16 players.")
