@@ -34,6 +34,14 @@ from draft_logic import (
     optimize_team_roles,
     generate_random_teams,
 )
+from types import SimpleNamespace
+
+from views import (
+    DraftBoardView,
+    AdminDraftView,
+    CaptainPickView,
+    SetupWizardView,
+)
 
 
 players = {}
@@ -253,104 +261,7 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
     await post_new_draft_board(interaction.guild.id)
     
 
-class DraftBoardView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
 
-    @discord.ui.button(label="Sign Up", style=discord.ButtonStyle.success, custom_id="draft_signup")
-    async def signup_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await signup_player(interaction, silent=True)
-        if result:
-            await refresh_board(interaction)
-
-    @discord.ui.button(label="Drop", style=discord.ButtonStyle.danger, custom_id="draft_drop")
-    async def drop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await drop_player(interaction, silent=True)
-        if result:
-            await refresh_board(interaction)
-
-    @discord.ui.button(label="Vote Captain", style=discord.ButtonStyle.primary, custom_id="draft_vote_captain")
-    async def vote_captain_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await vote_player(interaction, "captain", "Captain Mode", silent=True)
-        if result:
-            await refresh_board(interaction)
-
-    @discord.ui.button(label="Vote Random", style=discord.ButtonStyle.primary, custom_id="draft_vote_random")
-    async def vote_random_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await vote_player(interaction, "random", "Random Draft", silent=True)
-        if result:
-            await refresh_board(interaction)
-
-    @discord.ui.button(label="Volunteer Captain", style=discord.ButtonStyle.secondary, custom_id="draft_captain")
-    async def captain_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await volunteer_captain(interaction, silent=True)
-        if result:
-            await refresh_board(interaction)
-    @discord.ui.button(label="Start Draft", style=discord.ButtonStyle.success, custom_id="draft_start")
-    async def start_draft_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can start the draft.",
-                ephemeral=True
-            )
-            return
-
-        if len(lobby) != 16:
-            await interaction.response.send_message(
-                f"Need exactly 16 players. Current: {len(lobby)}/16",
-                ephemeral=True
-            )
-            return
-
-        # Reuse your existing logic
-        await run_startdraft(interaction)
-    @discord.ui.button(label="Pick Player", style=discord.ButtonStyle.success, custom_id="draft_pick_player")
-    async def pick_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not captain_draft:
-            await interaction.response.send_message(
-                "No captain draft is active.",
-                ephemeral=True
-            )
-            return
-
-        current_picker = captain_draft.current_picker()
-
-        if interaction.user.id != current_picker:
-            await interaction.response.send_message(
-                f"It is currently {player_label(current_picker)}'s pick.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "Choose a player to pick:",
-            view=CaptainPickView(),
-            ephemeral=True
-        )
-    @discord.ui.button(label="Admin Panel", style=discord.ButtonStyle.secondary, custom_id="draft_admin_panel")
-    async def admin_panel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can use this.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "Admin draft controls:",
-            view=AdminDraftView(),
-            ephemeral=True
-        )
-    @discord.ui.button(label="Status", style=discord.ButtonStyle.secondary, custom_id="draft_status")
-    async def status_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await show_status(interaction)
-
-
-async def refresh_board(interaction: discord.Interaction):
-    await interaction.message.edit(
-        embed=build_draft_board_embed(),
-        view=DraftBoardView()
-    )
 
 
 async def post_new_draft_board(guild_id):
@@ -384,7 +295,7 @@ async def post_new_draft_board(guild_id):
 
     message = await channel.send(
         embed=build_draft_board_embed(),
-        view=DraftBoardView()
+        view=DraftBoardView(get_view_context())
     )
 
     save_board_message_id(guild_id, message.id)
@@ -530,62 +441,7 @@ async def show_status(interaction: discord.Interaction):
 
 
 
-class KickPlayerSelect(discord.ui.Select):
-    def __init__(self):
-        options = []
 
-        for user_id in lobby:
-            p = players[user_id]
-            options.append(
-                discord.SelectOption(
-                    label=p["ign"],
-                    description="Active Lobby",
-                    value=str(user_id)
-                )
-            )
-
-        for user_id in waiting_room:
-            p = players[user_id]
-            options.append(
-                discord.SelectOption(
-                    label=p["ign"],
-                    description="Waiting Room",
-                    value=str(user_id)
-                )
-            )
-
-        if not options:
-            options.append(
-                discord.SelectOption(
-                    label="No players available",
-                    description="Lobby and waiting room are empty.",
-                    value="none"
-                )
-            )
-
-        super().__init__(
-            placeholder="Choose a player to kick",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can use this.",
-                ephemeral=True
-            )
-            return
-
-        if self.values[0] == "none":
-            await interaction.response.send_message(
-                "No players to kick.",
-                ephemeral=True
-            )
-            return
-
-        await kick_from_draft(interaction, int(self.values[0]))
 
 async def move_teams_to_voice(interaction: discord.Interaction):
     config = get_guild_config(interaction.guild.id)
@@ -692,243 +548,82 @@ async def wipe_lobby(interaction: discord.Interaction, silent=False):
         )
 
     await post_new_draft_board(interaction.guild.id) 
-class AdminDraftView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(KickPlayerSelect())
-    @discord.ui.button(label="Move Teams", style=discord.ButtonStyle.primary)
-    async def move_teams_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can move teams.",
-                ephemeral=True
-            )
-            return
-
-        await move_teams_to_voice(interaction)
-    @discord.ui.button(label="Wipe Lobby", style=discord.ButtonStyle.danger)
-    async def wipe_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can wipe the lobby.",
-                ephemeral=True
-            )
-            return
-
-        await wipe_lobby(interaction, silent=True)    
-    @discord.ui.button(label="Reset Draft", style=discord.ButtonStyle.danger)
-    async def reset_draft_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_draft_admin(interaction):
-            await interaction.response.send_message(
-                "Only draft admins can reset the draft.",
-                ephemeral=True
-            )
-            return
-    
-        await reset_draft_only(interaction, silent=True)
-        await post_new_draft_board(interaction.guild.id)
-        
-class CaptainPickSelect(discord.ui.Select):
-    def __init__(self):
-        options = []
-
-        if captain_draft:
-            for user_id in captain_draft.available:
-                p = players[user_id]
-                roles = ", ".join(p["roles"])
-
-                options.append(
-                    discord.SelectOption(
-                        label=p["ign"][:100],
-                        description=roles[:100],
-                        value=str(user_id)
-                    )
-                )
-
-        if not options:
-            options.append(
-                discord.SelectOption(
-                    label="No players available",
-                    value="none"
-                )
-            )
-
-        super().__init__(
-            placeholder="Pick a player",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        global draft_result, captain_draft, final_team_a, final_team_b
-
-        if not captain_draft:
-            await interaction.response.send_message("No captain draft is active.", ephemeral=True)
-            return
-
-        if self.values[0] == "none":
-            await interaction.response.send_message("No players available.", ephemeral=True)
-            return
-
-        picked_id = int(self.values[0])
-        picker_id = interaction.user.id
-
-        success, message = captain_draft.pick_player(players, picker_id, picked_id)
-
-        if not success:
-            await interaction.response.send_message(message, ephemeral=True)
-            return
-
-        if captain_draft.is_complete():
-            captain_draft.team_a = optimize_team_roles(players, captain_draft.team_a)
-            captain_draft.team_b = optimize_team_roles(players, captain_draft.team_b)
-            final_team_a = captain_draft.team_a
-            final_team_b = captain_draft.team_b
-
-            draft_result = (
-                "**Mode:** Captain Draft\n\n"
-                "### Team A\n"
-                f"{team_text(captain_draft.team_a)}\n\n"
-                "### Team B\n"
-                f"{team_text(captain_draft.team_b)}"
-            )
-            captain_draft = None
-
-        await interaction.response.defer()
-        if captain_draft:
-            next_picker = captain_draft.current_picker()
-            if next_picker:
-                channel = interaction.channel
-                await channel.send(
-                    f"{player_label(next_picker)}, you are on the clock. Click **Pick Player** on the draft board."
-                )
-        await post_new_draft_board(interaction.guild.id)
-
-
-class CaptainPickView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(CaptainPickSelect())
-        
-class SetupWizardView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        placeholder="Step 1: Select draft board text channel",
-        channel_types=[discord.ChannelType.text],
-        min_values=1,
-        max_values=1
+def get_captain_draft():
+    return captain_draft
+async def refresh_board(interaction: discord.Interaction):
+    await interaction.message.edit(
+        embed=build_draft_board_embed(),
+        view=DraftBoardView(get_view_context())
     )
-    async def select_draft_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
-            return
 
-        channel = select.values[0]
+def get_view_context():
+    return SimpleNamespace(
+        players=players,
+        lobby=lobby,
+        waiting_room=waiting_room,
 
-        save_guild_config(
-            interaction.guild.id,
-            draft_channel_id=channel.id
-        )
+        get_captain_draft=get_captain_draft,
 
-        await interaction.response.send_message(
-            f"Draft board channel saved: {channel.mention}\n\nNow select Team A voice channel.",
-            ephemeral=True,
-            view=SetupTeamAVoiceView()
-        )
-
-
-class SetupTeamAVoiceView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        placeholder="Step 2: Select Team A voice channel",
-        channel_types=[discord.ChannelType.voice],
-        min_values=1,
-        max_values=1
+        signup_player=signup_player,
+        drop_player=drop_player,
+        vote_player=vote_player,
+        volunteer_captain=volunteer_captain,
+        refresh_board=refresh_board,
+        show_status=show_status,
+        run_startdraft=run_startdraft,
+        player_label=player_label,
+        is_draft_admin=is_draft_admin,
+        kick_from_draft=kick_from_draft,
+        move_teams_to_voice=move_teams_to_voice,
+        wipe_lobby=wipe_lobby,
+        reset_draft_only=reset_draft_only,
+        post_new_draft_board=post_new_draft_board,
+        save_guild_config=save_guild_config,
+        handle_captain_pick=handle_captain_pick,
     )
-    async def select_team_a_voice(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
-            return
+async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
+    global draft_result, captain_draft, final_team_a, final_team_b
 
-        channel = select.values[0]
+    if not captain_draft:
+        await interaction.response.send_message("No captain draft is active.", ephemeral=True)
+        return
 
-        save_guild_config(
-            interaction.guild.id,
-            team_a_voice_channel_id=channel.id
+    picker_id = interaction.user.id
+
+    success, message = captain_draft.pick_player(players, picker_id, picked_id)
+
+    if not success:
+        await interaction.response.send_message(message, ephemeral=True)
+        return
+
+    if captain_draft.is_complete():
+        captain_draft.team_a = optimize_team_roles(players, captain_draft.team_a)
+        captain_draft.team_b = optimize_team_roles(players, captain_draft.team_b)
+
+        final_team_a = captain_draft.team_a
+        final_team_b = captain_draft.team_b
+
+        draft_result = (
+            "**Mode:** Captain Draft\n\n"
+            "### Team A\n"
+            f"{team_text(final_team_a)}\n\n"
+            "### Team B\n"
+            f"{team_text(final_team_b)}"
         )
 
-        await interaction.response.send_message(
-            f"Team A voice channel saved: **{channel.name}**\n\nNow select Team B voice channel.",
-            ephemeral=True,
-            view=SetupTeamBVoiceView()
-        )
+        captain_draft = None
 
+    await interaction.response.defer()
 
-class SetupTeamBVoiceView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
+    if captain_draft:
+        next_picker = captain_draft.current_picker()
+        if next_picker:
+            await interaction.channel.send(
+                f"{player_label(next_picker)}, you are on the clock. Click **Pick Player** on the draft board."
+            )
 
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        placeholder="Step 3: Select Team B voice channel",
-        channel_types=[discord.ChannelType.voice],
-        min_values=1,
-        max_values=1
-    )
-    async def select_team_b_voice(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
-            return
-
-        channel = select.values[0]
-
-        save_guild_config(
-            interaction.guild.id,
-            team_b_voice_channel_id=channel.id
-        )
-
-        await interaction.response.send_message(
-            f"Team B voice channel saved: **{channel.name}**\n\nNow select the Draft Admin role.",
-            ephemeral=True,
-            view=SetupAdminRoleView()
-        )
-
-
-class SetupAdminRoleView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-
-    @discord.ui.select(
-        cls=discord.ui.RoleSelect,
-        placeholder="Step 4: Select Draft Admin role",
-        min_values=1,
-        max_values=1
-    )
-    async def select_admin_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
-            return
-
-        role = select.values[0]
-
-        save_guild_config(
-            interaction.guild.id,
-            admin_role_id=role.id
-        )
-
-        await interaction.response.send_message(
-            f"Draft Admin role saved: {role.mention}\n\nSetup complete. Posting draft board.",
-            ephemeral=True
-        )
-
-        await post_new_draft_board(interaction.guild.id)       
+    await post_new_draft_board(interaction.guild.id)        
+     
 class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
@@ -972,7 +667,7 @@ class MyBot(discord.Client):
 
         await self.tree.sync()
 
-        self.add_view(DraftBoardView())
+        self.add_view(DraftBoardView(get_view_context()))
         self.loop.create_task(self.inactivity_check_loop())
 
 
@@ -999,7 +694,7 @@ async def setup(interaction: discord.Interaction):
     await interaction.response.send_message(
         "Draft bot setup started.\n\nFirst, select the text channel where the draft board should be posted.",
         ephemeral=True,
-        view=SetupWizardView()
+        view=SetupWizardView(get_view_context())
     )
 @bot.tree.command(name="filltest", description="Fill lobby with test players.")
 async def filltest(interaction: discord.Interaction):
@@ -1086,7 +781,7 @@ async def pickpanel(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         "Choose a player to pick:",
-        view=CaptainPickView(),
+        view=CaptainPickView(get_view_context()),
         ephemeral=True
     )
 @bot.tree.command(name="adminboard", description="Open the admin draft controls.")
@@ -1101,7 +796,7 @@ async def adminboard(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         "Admin draft controls:",
-        view=AdminDraftView(),
+        view=AdminDraftView(get_view_context()),
         ephemeral=True
     )    
 @bot.event
@@ -1253,7 +948,7 @@ async def draftstatus(interaction: discord.Interaction):
 async def draftboard(interaction: discord.Interaction):
     await interaction.response.send_message(
         embed=build_draft_board_embed(),
-        view=DraftBoardView()
+        view=DraftBoardView(get_view_context())
     )
 
 async def start_captain_draft(interaction: discord.Interaction):
