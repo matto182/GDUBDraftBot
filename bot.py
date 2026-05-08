@@ -28,7 +28,12 @@ from database import (
     load_lobby_state_from_db,
 )
 
-
+from draft_logic import (
+    CaptainDraft,
+    role_sort_key,
+    optimize_team_roles,
+    generate_random_teams,
+)
 
 
 players = {}
@@ -91,24 +96,6 @@ def player_label(user_id):
 
     return label
 
-def has_role_type(user_id, role_set):
-    return bool(set(players[user_id]["roles"]) & role_set)
-
-
-def role_sort_key(assigned_role):
-    order = {
-        "Frontline": 1,
-        "Lyssa/Flex Derv": 2,
-        "Mesmer": 3,
-        "Elementalist": 3,
-        "Necromancer": 3,
-        "Ranger": 3,
-        "Prot Monk": 5,
-        "Heal Monk": 6,
-        "Support/Flag (8)": 7,
-    }
-
-    return order.get(assigned_role, 99)
 
 
 def team_text(team):
@@ -265,53 +252,7 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
 
     await post_new_draft_board(interaction.guild.id)
     
-class CaptainDraft:
-    def __init__(self, captain_a, captain_b):
-        self.captain_a = captain_a
-        self.captain_b = captain_b
-        self.team_a = [(captain_a, "Captain")]
-        self.team_b = [(captain_b, "Captain")]
-        self.available = [p for p in lobby if p not in [captain_a, captain_b]]
-        self.pick_index = 0
-        self.pick_order = self.build_pick_order()
 
-    def build_pick_order(self):
-        # 14 remaining picks after captains are placed.
-        # A, B, B, A, A, B, B, A...
-        order = []
-        pattern = [self.captain_a, self.captain_b, self.captain_b, self.captain_a]
-
-        while len(order) < 14:
-            order.extend(pattern)
-
-        return order[:14]
-
-    def current_picker(self):
-        if self.pick_index >= len(self.pick_order):
-            return None
-        return self.pick_order[self.pick_index]
-
-    def is_complete(self):
-        return len(self.team_a) == 8 and len(self.team_b) == 8
-
-    def pick_player(self, picker_id, picked_id):
-        if picker_id != self.current_picker():
-            return False, "It is not your pick."
-
-        if picked_id not in self.available:
-            return False, "That player is not available."
-
-        assigned_role = players[picked_id]["roles"][0]
-
-        if picker_id == self.captain_a:
-            self.team_a.append((picked_id, assigned_role))
-        else:
-            self.team_b.append((picked_id, assigned_role))
-
-        self.available.remove(picked_id)
-        self.pick_index += 1
-
-        return True, "Pick accepted."
 class DraftBoardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -587,291 +528,7 @@ async def show_status(interaction: discord.Interaction):
     )
 
 
-def pick_player(pool, team, used):
-    random.shuffle(pool)
 
-    for user_id in pool:
-        if user_id not in used:
-            team.append(user_id)
-            used.add(user_id)
-            return user_id
-
-    return None
-
-def role_priority_index(player_id, role):
-    """
-    Lower number = higher priority.
-    If role is not in the player's list, return a big number.
-    """
-    player_roles = players[player_id]["roles"]
-
-    if role in player_roles:
-        return player_roles.index(role)
-
-    return 999
-
-
-def best_role_for_slot(player_id, desired_roles):
-    """
-    Given a player and a slot type, assign the highest-priority role
-    they listed that matches the slot.
-    """
-    player_roles = players[player_id]["roles"]
-
-    for role in player_roles:
-        if role in desired_roles:
-            return role
-
-    return None
-
-
-def pick_for_role(team, used, desired_roles):
-    """
-    Picks someone for a role slot.
-    Priority behavior:
-    - Prefer people who listed the needed role higher.
-    - If tied, randomize between them.
-    """
-    candidates = []
-
-    for p in lobby:
-        if p in used:
-            continue
-
-        assigned_role = best_role_for_slot(p, desired_roles)
-
-        if assigned_role:
-            candidates.append((p, assigned_role, role_priority_index(p, assigned_role)))
-
-    if not candidates:
-        return False
-
-    # Lower priority index is better: 0 = first role, 1 = second role, etc.
-    best_priority = min(priority for _, _, priority in candidates)
-
-    best_candidates = [
-        (p, role, priority)
-        for p, role, priority in candidates
-        if priority == best_priority
-    ]
-
-    picked, assigned_role, _ = random.choice(best_candidates)
-
-    team.append((picked, assigned_role))
-    used.add(picked)
-
-    return True
-
-
-def assign_fallback_role(player_id):
-    """
-    Used only if we have to emergency-fill a team.
-    Gives the player their highest-priority listed role.
-    """
-    return players[player_id]["roles"][0]
-def optimize_team_roles(team):
-    """
-    Assigns one displayed role per player after captain draft.
-    Tries to fill the standard comp while respecting player priority.
-    """
-    desired_slots = [
-    ["Frontline"],
-    ["Frontline"],
-    ["Lyssa/Flex Derv"],
-    MIDLINE_ROLES,
-    MIDLINE_ROLES,
-    ["Prot Monk"],
-    ["Heal Monk"],
-    ["Support/Flag (8)"],
-]
-
-    unassigned = [user_id for user_id, _ in team]
-    optimized = []
-
-    for desired_roles in desired_slots:
-        candidates = []
-
-        for user_id in unassigned:
-            role = best_role_for_slot(user_id, desired_roles)
-
-            if role:
-                candidates.append((
-                    user_id,
-                    role,
-                    role_priority_index(user_id, role)
-                ))
-
-        if candidates:
-            best_priority = min(c[2] for c in candidates)
-            best_candidates = [c for c in candidates if c[2] == best_priority]
-            picked_id, assigned_role, _ = random.choice(best_candidates)
-
-            optimized.append((picked_id, assigned_role))
-            unassigned.remove(picked_id)
-
-    for user_id in unassigned:
-        optimized.append((user_id, assign_fallback_role(user_id)))
-
-    return optimized
-
-def count_assigned(team, role_set):
-    return len([1 for _, role in team if role in role_set])
-
-
-def get_priority_role_for_slot(player_id, desired_roles):
-    player_roles = players[player_id]["roles"]
-
-    for role in player_roles:
-        if role in desired_roles:
-            return role
-
-    return None
-
-
-def assign_team_roles_for_score(team_players):
-    desired_slots = [
-        ["Frontline"],
-        ["Lyssa/Flex Derv"],
-        MIDLINE_ROLES,
-        MIDLINE_ROLES,
-        ["Prot Monk"],
-        ["Heal Monk"],
-        ["Support/Flag (8)"],
-        FRONTLINE_ROLES | MIDLINE_ROLES,
-    ]
-
-    unassigned = team_players[:]
-    assigned = []
-
-    for desired_roles in desired_slots:
-        candidates = []
-
-        for user_id in unassigned:
-            role = get_priority_role_for_slot(user_id, desired_roles)
-
-            if role:
-                candidates.append((
-                    user_id,
-                    role,
-                    role_priority_index(user_id, role)
-                ))
-
-        if candidates:
-            best_priority = min(c[2] for c in candidates)
-            best_candidates = [c for c in candidates if c[2] == best_priority]
-            picked_id, assigned_role, _priority = random.choice(best_candidates)
-
-            assigned.append((picked_id, assigned_role))
-            unassigned.remove(picked_id)
-
-    for user_id in unassigned:
-        assigned.append((user_id, assign_fallback_role(user_id)))
-
-    return assigned
-
-
-def score_team(team):
-    score = 0
-    assigned_roles = [role for _user_id, role in team]
-
-    # Required backline roles
-    required_roles = ["Prot Monk", "Heal Monk", "Support/Flag (8)"]
-
-    for role in required_roles:
-        count = assigned_roles.count(role)
-
-        if count == 0:
-            score += 1000
-        elif count > 1:
-            score += 200 * (count - 1)
-
-    # Frontline target: exactly 2
-    frontline_count = assigned_roles.count("Frontline")
-
-    if frontline_count < 2:
-        score += 700 * (2 - frontline_count)
-    elif frontline_count > 2:
-        score += 300 * (frontline_count - 2)
-
-    # Flex requirement
-    flex_count = assigned_roles.count("Lyssa/Flex Derv")
-    if flex_count == 0:
-        score += 350
-    elif flex_count > 1:
-        score += 150 * (flex_count - 1)
-
-    # Midline count target: 2 or 3 is good
-    mid_count = len([r for r in assigned_roles if r in MIDLINE_ROLES])
-
-    if mid_count < 2:
-        score += 400 * (2 - mid_count)
-    elif mid_count > 3:
-        score += 150 * (mid_count - 3)
-
-    # Penalize people playing lower-priority roles
-    for user_id, assigned_role in team:
-        priority = role_priority_index(user_id, assigned_role)
-
-        if priority == 0:
-            score += 0
-        elif priority == 1:
-            score += 15
-        elif priority == 2:
-            score += 40
-        elif priority == 3:
-            score += 90
-        elif priority == 4:
-            score += 160
-        else:
-            score += 300
-
-    return score
-
-
-def score_match(team_a, team_b):
-    score_a = score_team(team_a)
-    score_b = score_team(team_b)
-
-    # Penalize uneven team quality
-    balance_penalty = abs(score_a - score_b)
-
-    return score_a + score_b + balance_penalty
-
-
-def generate_random_teams():
-    best_result = None
-    best_score = None
-
-    attempts = 1500
-
-    for _ in range(attempts):
-        shuffled = lobby[:]
-        random.shuffle(shuffled)
-
-        raw_team_a = shuffled[:8]
-        raw_team_b = shuffled[8:]
-
-        team_a = assign_team_roles_for_score(raw_team_a)
-        team_b = assign_team_roles_for_score(raw_team_b)
-
-        score = score_match(team_a, team_b)
-
-        if best_score is None or score < best_score:
-            best_score = score
-            best_result = (team_a, team_b)
-
-            # Perfect enough, stop early
-            if best_score <= 50:
-                break
-
-    team_a, team_b = best_result
-
-    formation = {
-        "front": "Smart balanced",
-        "score": best_score
-    }
-
-    return team_a, team_b, formation
 
 class KickPlayerSelect(discord.ui.Select):
     def __init__(self):
@@ -1024,6 +681,8 @@ async def wipe_lobby(interaction: discord.Interaction, silent=False):
 
     last_signup_time = None
 
+    save_lobby_state(interaction.guild.id)
+
     if silent:
         await interaction.response.defer()
     else:
@@ -1032,7 +691,7 @@ async def wipe_lobby(interaction: discord.Interaction, silent=False):
             ephemeral=True
         )
 
-    await post_new_draft_board(interaction.guild.id)    
+    await post_new_draft_board(interaction.guild.id) 
 class AdminDraftView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -1115,15 +774,15 @@ class CaptainPickSelect(discord.ui.Select):
         picked_id = int(self.values[0])
         picker_id = interaction.user.id
 
-        success, message = captain_draft.pick_player(picker_id, picked_id)
+        success, message = captain_draft.pick_player(players, picker_id, picked_id)
 
         if not success:
             await interaction.response.send_message(message, ephemeral=True)
             return
 
         if captain_draft.is_complete():
-            captain_draft.team_a = optimize_team_roles(captain_draft.team_a)
-            captain_draft.team_b = optimize_team_roles(captain_draft.team_b)
+            captain_draft.team_a = optimize_team_roles(players, captain_draft.team_a)
+            captain_draft.team_b = optimize_team_roles(players, captain_draft.team_b)
             final_team_a = captain_draft.team_a
             final_team_b = captain_draft.team_b
 
@@ -1610,7 +1269,7 @@ async def start_captain_draft(interaction: discord.Interaction):
     chosen = random.sample(captain_volunteers, 2)
     random.shuffle(chosen)
 
-    captain_draft = CaptainDraft(chosen[0], chosen[1])
+    captain_draft = CaptainDraft(lobby, chosen[0], chosen[1])
     draft_result = None
     final_team_a = []
     final_team_b = []
@@ -1642,7 +1301,7 @@ async def run_startdraft(interaction: discord.Interaction):
         await start_captain_draft(interaction)
         return
 
-    team_a, team_b, formation = generate_random_teams()
+    team_a, team_b, formation = generate_random_teams(players, lobby)
 
     final_team_a = team_a
     final_team_b = team_b
