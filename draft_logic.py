@@ -108,14 +108,14 @@ def get_priority_role_for_slot(players, player_id, desired_roles):
 
 def assign_team_roles_for_score(players, team_players):
     desired_slots = [
-        ["Frontline"],
-        ["Frontline"],
-        ["Lyssa/Flex Derv"],
-        MIDLINE_ROLES,
-        MIDLINE_ROLES,
         ["Prot Monk"],
         ["Heal Monk"],
         ["Support/Flag (8)"],
+        ["Frontline"],
+        ["Frontline"],
+        MIDLINE_ROLES,
+        MIDLINE_ROLES,
+        ["Lyssa/Flex Derv", "Frontline", "Mesmer", "Elementalist", "Necromancer", "Ranger"],
     ]
 
     unassigned = team_players[:]
@@ -152,51 +152,71 @@ def score_team(players, team):
     score = 0
     assigned_roles = [role for _user_id, role in team]
 
-    required_roles = ["Prot Monk", "Heal Monk", "Support/Flag (8)"]
+    # Backline is the highest priority.
+    required_backline = ["Prot Monk", "Heal Monk", "Support/Flag (8)"]
 
-    for role in required_roles:
+    for role in required_backline:
         count = assigned_roles.count(role)
 
         if count == 0:
-            score += 1000
+            score += 3000
         elif count > 1:
-            score += 200 * (count - 1)
+            score += 400 * (count - 1)
 
+    # Frontline is second most important.
     frontline_count = assigned_roles.count("Frontline")
 
-    if frontline_count < 2:
-        score += 700 * (2 - frontline_count)
-    elif frontline_count > 2:
-        score += 300 * (frontline_count - 2)
+    if frontline_count == 0:
+        score += 2500
+    elif frontline_count == 1:
+        score += 1200
+    elif frontline_count == 2:
+        score += 0
+    elif frontline_count == 3:
+        score += 50
+    else:
+        score += 300 * (frontline_count - 3)
 
-    flex_count = assigned_roles.count("Lyssa/Flex Derv")
-    if flex_count == 0:
-        score += 350
-    elif flex_count > 1:
-        score += 150 * (flex_count - 1)
-
+    # Midline is important, but less important than backline/frontline.
     mid_count = len([r for r in assigned_roles if r in MIDLINE_ROLES])
 
-    if mid_count < 2:
-        score += 400 * (2 - mid_count)
-    elif mid_count > 3:
-        score += 150 * (mid_count - 3)
+    if mid_count == 0:
+        score += 1200
+    elif mid_count == 1:
+        score += 400
+    elif mid_count == 2:
+        score += 0
+    elif mid_count == 3:
+        score += 75
+    else:
+        score += 250 * (mid_count - 3)
 
+    # Flex is useful, but least important.
+    flex_count = assigned_roles.count("Lyssa/Flex Derv")
+
+    if flex_count == 0:
+        score += 100
+    elif flex_count == 1:
+        score += 0
+    else:
+        score += 150 * (flex_count - 1)
+
+    # Role preference penalty.
     for user_id, assigned_role in team:
         priority = role_priority_index(players, user_id, assigned_role)
 
         if priority == 0:
             score += 0
         elif priority == 1:
-            score += 15
+            score += 20
         elif priority == 2:
-            score += 40
+            score += 60
         elif priority == 3:
-            score += 90
+            score += 120
         elif priority == 4:
-            score += 160
+            score += 220
         else:
-            score += 300
+            score += 400
 
     return score
 

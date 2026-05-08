@@ -29,6 +29,8 @@ from database import (
     save_board_message_id,
     save_lobby_state_to_db,
     load_lobby_state_from_db,
+    save_completed_draft,
+    get_player_stats,
 )
 
 from draft_logic import (
@@ -657,6 +659,15 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
 
         state.final_team_a = state.captain_draft.team_a
         state.final_team_b = state.captain_draft.team_b
+        save_completed_draft(
+            guild_id=guild_id,
+            mode="captain",
+            team_a=state.final_team_a,
+            team_b=state.final_team_b,
+            players=players,
+            captain_a=state.captain_draft.captain_a,
+            captain_b=state.captain_draft.captain_b
+            )
 
         state.draft_result = (
             "**Mode:** Captain Draft\n\n"
@@ -821,6 +832,75 @@ async def filltest(interaction: discord.Interaction):
     )
 
     await post_new_draft_board(guild_id)
+@bot.tree.command(name="stats", description="View player draft stats.")
+@app_commands.describe(player="Optional player to view")
+async def stats(
+    interaction: discord.Interaction,
+    player: discord.Member = None
+):
+    target = player or interaction.user
+
+    guild_id = interaction.guild.id
+    stats_data = get_player_stats(guild_id, target.id)
+
+    drafts_played = stats_data["drafts_played"]
+    times_captain = stats_data["times_captain"]
+
+    roles_text = ""
+
+    if stats_data["roles"]:
+        for role, count in stats_data["roles"]:
+            roles_text += f"{role}: {count}\n"
+    else:
+        roles_text = "No role data."
+
+    priority_text = ""
+
+    priority_map = {
+        1: "Primary",
+        2: "Secondary",
+        3: "Tertiary",
+        4: "Fourth",
+        999: "Fill/Off-role"
+    }
+
+    if stats_data["priority_stats"]:
+        for priority, count in stats_data["priority_stats"]:
+            label = priority_map.get(priority, f"Priority {priority}")
+            priority_text += f"{label}: {count}\n"
+    else:
+        priority_text = "No assignment data."
+
+    embed = discord.Embed(
+        title=f"{target.display_name} Draft Stats",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="Drafts Played",
+        value=str(drafts_played),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Times Captain",
+        value=str(times_captain),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Roles Played",
+        value=roles_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Role Priority Usage",
+        value=priority_text,
+        inline=False
+    )
+
+    await interaction.response.send_message(embed=embed)
 @bot.tree.command(name="pickpanel", description="Open the captain pick panel.")
 async def pickpanel(interaction: discord.Interaction):
     if not captain_draft:
@@ -1057,6 +1137,15 @@ async def run_startdraft(interaction: discord.Interaction):
 
     state.final_team_a = team_a
     state.final_team_b = team_b
+    #Saving draft stats
+    save_completed_draft(
+        guild_id=guild_id,
+        mode="random",
+        team_a=team_a,
+        team_b=team_b,
+        players=players,
+        balance_score=formation["score"]
+    )
 
     state.draft_result = (
         "**Mode:** Random Draft\n\n"

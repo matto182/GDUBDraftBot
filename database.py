@@ -47,6 +47,30 @@ def init_db():
             last_signup_time REAL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS draft_history (
+            draft_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            captain_a INTEGER,
+            captain_b INTEGER,
+            balance_score INTEGER
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS draft_players (
+            draft_id INTEGER NOT NULL,
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            team TEXT NOT NULL,
+            assigned_role TEXT NOT NULL,
+            role_priority_index INTEGER NOT NULL,
+            was_captain INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (draft_id, user_id)
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -248,3 +272,127 @@ def load_lobby_state_from_db(guild_id, players, lobby, waiting_room):
     conn.close()
 
     return row[0] if row and row[0] else None
+import time
+
+
+def save_completed_draft(
+    guild_id,
+    mode,
+    team_a,
+    team_b,
+    players,
+    captain_a=None,
+    captain_b=None,
+    balance_score=None
+):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO draft_history (
+            guild_id,
+            mode,
+            created_at,
+            captain_a,
+            captain_b,
+            balance_score
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        guild_id,
+        mode,
+        time.time(),
+        captain_a,
+        captain_b,
+        balance_score
+    ))
+
+    draft_id = cursor.lastrowid
+
+    def get_role_priority(user_id, assigned_role):
+        roles = players[user_id]["roles"]
+
+        if assigned_role in roles:
+            return roles.index(assigned_role) + 1
+
+        return 999
+
+    for team_name, team in [("A", team_a), ("B", team_b)]:
+        for user_id, assigned_role in team:
+            was_captain = 1 if user_id in [captain_a, captain_b] else 0
+
+            cursor.execute("""
+                INSERT INTO draft_players (
+                    draft_id,
+                    guild_id,
+                    user_id,
+                    team,
+                    assigned_role,
+                    role_priority_index,
+                    was_captain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                draft_id,
+                guild_id,
+                user_id,
+                team_name,
+                assigned_role,
+                get_role_priority(user_id, assigned_role),
+                was_captain
+            ))
+
+    conn.commit()
+    conn.close()
+
+    return draft_id
+def get_player_stats(guild_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    stats = {}
+
+    cursor.execute("""
+        SELECT COUNT(DISTINCT draft_id)
+        FROM draft_players
+        WHERE guild_id = ?
+        AND user_id = ?
+    """, (guild_id, user_id))
+
+    stats["drafts_played"] = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM draft_players
+        WHERE guild_id = ?
+        AND user_id = ?
+        AND was_captain = 1
+    """, (guild_id, user_id))
+
+    stats["times_captain"] = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT assigned_role, COUNT(*)
+        FROM draft_players
+        WHERE guild_id = ?
+        AND user_id = ?
+        GROUP BY assigned_role
+        ORDER BY COUNT(*) DESC
+    """, (guild_id, user_id))
+
+    stats["roles"] = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT role_priority_index, COUNT(*)
+        FROM draft_players
+        WHERE guild_id = ?
+        AND user_id = ?
+        GROUP BY role_priority_index
+        ORDER BY role_priority_index ASC
+    """, (guild_id, user_id))
+
+    stats["priority_stats"] = cursor.fetchall()
+
+    conn.close()
+
+    return stats
