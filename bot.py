@@ -17,6 +17,19 @@ from config import (
     BACKLINE_ROLES,
 )
 
+from database import (
+    init_db,
+    save_player,
+    load_players_into,
+    save_guild_config,
+    get_guild_config,
+    save_board_message_id,
+    save_lobby_state_to_db,
+    load_lobby_state_from_db,
+)
+
+
+
 
 players = {}
 lobby = []
@@ -28,246 +41,31 @@ draft_result = None
 captain_draft = None
 
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            discord_id INTEGER PRIMARY KEY,
-            discord_name TEXT NOT NULL,
-            ign TEXT NOT NULL,
-            roles TEXT NOT NULL
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS guild_config (
-            guild_id INTEGER PRIMARY KEY,
-            draft_channel_id INTEGER,
-            team_a_voice_channel_id INTEGER,
-            team_b_voice_channel_id INTEGER,
-            admin_role_id INTEGER,
-            board_message_id INTEGER
-        )
-    """)
-
-    try:
-        cursor.execute(
-            "ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER"
-        )
-    except sqlite3.OperationalError:
-        pass
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lobby_state (
-            guild_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            area TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            PRIMARY KEY (guild_id, user_id)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS guild_runtime_state (
-            guild_id INTEGER PRIMARY KEY,
-            last_signup_time REAL
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-def save_guild_config(
-    guild_id,
-    draft_channel_id=None,
-    team_a_voice_channel_id=None,
-    team_b_voice_channel_id=None,
-    admin_role_id=None
-):
-    current = get_guild_config(guild_id) or {}
-
-    draft_channel_id = draft_channel_id or current.get("draft_channel_id")
-    team_a_voice_channel_id = team_a_voice_channel_id or current.get("team_a_voice_channel_id")
-    team_b_voice_channel_id = team_b_voice_channel_id or current.get("team_b_voice_channel_id")
-    admin_role_id = admin_role_id or current.get("admin_role_id")
-
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO guild_config (
-            guild_id,
-            draft_channel_id,
-            team_a_voice_channel_id,
-            team_b_voice_channel_id,
-            admin_role_id
-        )
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            draft_channel_id = excluded.draft_channel_id,
-            team_a_voice_channel_id = excluded.team_a_voice_channel_id,
-            team_b_voice_channel_id = excluded.team_b_voice_channel_id,
-            admin_role_id = excluded.admin_role_id
-    """, (
-        guild_id,
-        draft_channel_id,
-        team_a_voice_channel_id,
-        team_b_voice_channel_id,
-        admin_role_id
-    ))
-
-    conn.commit()
-    conn.close()
-
-
-def get_guild_config(guild_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT
-            draft_channel_id,
-            team_a_voice_channel_id,
-            team_b_voice_channel_id,
-            admin_role_id,
-            board_message_id
-        FROM guild_config
-        WHERE guild_id = ?
-    """, (guild_id,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return None
-
-    return {
-        "draft_channel_id": row[0],
-        "team_a_voice_channel_id": row[1],
-        "team_b_voice_channel_id": row[2],
-        "admin_role_id": row[3],
-        "board_message_id": row[4],
-    }
-def save_board_message_id(guild_id, board_message_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE guild_config
-        SET board_message_id = ?
-        WHERE guild_id = ?
-    """, (board_message_id, guild_id))
-
-    conn.commit()
-    conn.close()
-def save_player(discord_id, discord_name, ign, roles):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO players (discord_id, discord_name, ign, roles)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(discord_id) DO UPDATE SET
-            discord_name = excluded.discord_name,
-            ign = excluded.ign,
-            roles = excluded.roles
-    """, (
-        discord_id,
-        discord_name,
-        ign,
-        ",".join(roles)
-    ))
-
-    conn.commit()
-    conn.close()
-
 
 def load_players():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+    load_players_into(players)
 
-    cursor.execute("SELECT discord_id, discord_name, ign, roles FROM players")
-    rows = cursor.fetchall()
 
-    conn.close()
-
-    for discord_id, discord_name, ign, roles_text in rows:
-        players[discord_id] = {
-            "discord_name": discord_name,
-            "ign": ign,
-            "roles": roles_text.split(",") if roles_text else [],
-        }
 def save_lobby_state(guild_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("DELETE FROM lobby_state WHERE guild_id = ?", (guild_id,))
-
-    for position, user_id in enumerate(lobby):
-        cursor.execute("""
-            INSERT INTO lobby_state (guild_id, user_id, area, position)
-            VALUES (?, ?, ?, ?)
-        """, (guild_id, user_id, "lobby", position))
-
-    for position, user_id in enumerate(waiting_room):
-        cursor.execute("""
-            INSERT INTO lobby_state (guild_id, user_id, area, position)
-            VALUES (?, ?, ?, ?)
-        """, (guild_id, user_id, "waiting_room", position))
-
-    cursor.execute("""
-        INSERT INTO guild_runtime_state (guild_id, last_signup_time)
-        VALUES (?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            last_signup_time = excluded.last_signup_time
-    """, (guild_id, last_signup_time))
-
-    conn.commit()
-    conn.close()
+    save_lobby_state_to_db(
+        guild_id,
+        lobby,
+        waiting_room,
+        last_signup_time
+    )
 
 
 def load_lobby_state(guild_id):
+    global last_signup_time
 
-    global lobby, waiting_room, last_signup_time
     load_players()
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT user_id, area
-        FROM lobby_state
-        WHERE guild_id = ?
-        ORDER BY position ASC
-    """, (guild_id,))
-
-    rows = cursor.fetchall()
-
-    lobby.clear()
-    waiting_room.clear()
-
-    for user_id, area in rows:
-        # Only restore players who still have saved /name and /role profile
-        if user_id not in players:
-            continue
-
-        if area == "lobby":
-            lobby.append(user_id)
-        elif area == "waiting_room":
-            waiting_room.append(user_id)
-
-    cursor.execute("""
-        SELECT last_signup_time
-        FROM guild_runtime_state
-        WHERE guild_id = ?
-    """, (guild_id,))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    last_signup_time = row[0] if row and row[0] else None
-
+    last_signup_time = load_lobby_state_from_db(
+        guild_id,
+        players,
+        lobby,
+        waiting_room
+    )
 def fill_lobby_from_waiting_room():
     while len(lobby) < 16 and waiting_room:
         next_player = waiting_room.pop(0)
@@ -1566,36 +1364,53 @@ async def filltest(interaction: discord.Interaction):
     final_team_a = []
     final_team_b = []
 
-    role_pool = [
-        "Frontline",
-        "Lyssa/Flex Derv",
-        "Mesmer",
-        "Elementalist",
-        "Necromancer",
-        "Ranger",
-        "Prot Monk",
-        "Heal Monk",
-        "Support/Flag (8)"
+    test_lobby = [
+        ("Player1",  ["Frontline", "Lyssa/Flex Derv", "Mesmer"]),
+        ("Player2",  ["Frontline", "Lyssa/Flex Derv", "Ranger"]),
+        ("Player3",  ["Mesmer", "Elementalist", "Necromancer"]),
+        ("Player4",  ["Elementalist", "Necromancer", "Ranger"]),
+        ("Player5",  ["Prot Monk", "Heal Monk", "Support/Flag (8)"]),
+        ("Player6",  ["Heal Monk", "Prot Monk", "Support/Flag (8)"]),
+        ("Player7",  ["Support/Flag (8)", "Heal Monk", "Prot Monk"]),
+        ("Player8",  ["Frontline", "Mesmer", "Ranger"]),
+
+        ("Player9",  ["Frontline", "Lyssa/Flex Derv", "Elementalist"]),
+        ("Player10", ["Frontline", "Lyssa/Flex Derv", "Necromancer"]),
+        ("Player11", ["Mesmer", "Elementalist", "Ranger"]),
+        ("Player12", ["Elementalist", "Necromancer", "Mesmer"]),
+        ("Player13", ["Prot Monk", "Heal Monk", "Support/Flag (8)"]),
+        ("Player14", ["Heal Monk", "Prot Monk", "Support/Flag (8)"]),
+        ("Player15", ["Support/Flag (8)", "Heal Monk", "Prot Monk"]),
+        ("Player16", ["Frontline", "Necromancer", "Ranger"]),
     ]
 
-    for i in range(16):
+    for i, (ign, roles) in enumerate(test_lobby):
         fake_id = 100000 + i
 
         players[fake_id] = {
             "discord_name": f"TestUser{i+1}",
-            "ign": f"Player{i+1}",
-            "roles": random.sample(role_pool, 3)
+            "ign": ign,
+            "roles": roles
         }
+
+        save_player(
+            fake_id,
+            f"TestUser{i+1}",
+            ign,
+            roles
+        )
 
         lobby.append(fake_id)
 
     last_signup_time = time.time()
 
+    save_lobby_state(interaction.guild.id)
+
     await interaction.response.send_message(
         "Test lobby filled with 16 players.",
         ephemeral=True
     )
-    save_lobby_state(interaction.guild.id)
+
     await post_new_draft_board(interaction.guild.id)
 @bot.tree.command(name="pickpanel", description="Open the captain pick panel.")
 async def pickpanel(interaction: discord.Interaction):
