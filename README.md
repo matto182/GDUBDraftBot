@@ -109,10 +109,12 @@ Step 1 — Set your in-game name
 Example:
 
 /name Smelly Monk
+
 Step 2 — Set your roles
+
 /role
 
-You will choose up to 5 roles.
+You can choose up to 5 roles.
 
 Order matters.
 
