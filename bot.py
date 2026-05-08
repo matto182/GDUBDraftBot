@@ -10,7 +10,15 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-
+from config import (
+    TOKEN,
+    DB_FILE,
+    ROLES,
+    FRONTLINE_ROLES,
+    FLEX_ROLES,
+    MIDLINE_ROLES,
+    BACKLINE_ROLES,
+)
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
