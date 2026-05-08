@@ -21,6 +21,11 @@ ROLES = [
 ]
 
 FRONTLINE_ROLES = {"Frontline"}
-FLEX_ROLES = {"Lyssa/Flex Derv"}
 MIDLINE_ROLES = {"Mesmer", "Elementalist", "Necromancer", "Ranger"}
-BACKLINE_ROLES = {"Prot Monk", "Heal Monk", "Support/Flag (8)"}
+
+# Auto-Draft weight defaults.
+# Individual player weights are stored in players.db via /setweight.
+# Higher numbers mean stronger players, sensible value are from 50-150 with 150
+# being the strongest player and 50 being the weakest player.
+DEFAULT_PLAYER_WEIGHT = 100
+AUTO_DRAFT_WEIGHT_BALANCE_MULTIPLIER = 25

@@ -137,7 +137,7 @@ Use the buttons on the draft board:
 Sign Up → join the draft
 Drop → leave the draft
 Vote Captain → vote for captain mode
-Vote Random → vote for random draft
+Vote Auto-Draft → vote for automatic balanced draft
 Volunteer Captain → mark yourself as a captain
 Lobby Behavior
 The first 16 players go into the active lobby
@@ -149,10 +149,32 @@ When there are 16 players:
 
 /startdraft
 Draft Modes
-Random Draft
+Auto-Draft
 The bot automatically builds two teams
 It uses player role priorities to decide placements
 It tries to create a balanced team composition
+It also balances teams using manually curated player skill weights
+
+Player Weights
+
+Auto-Draft uses manual skill weights stored on each player record in `players.db`.
+Weights are not configured with a `PLAYER_WEIGHTS` dictionary.
+
+Draft admins can set a registered player's weight with:
+
+`/setweight @Player 115`
+
+The player must already be registered with `/name`. Weights persist across bot restarts, lobby resets, and future drafts because they are saved in the database.
+
+Weights must be between 50 and 150. `DEFAULT_PLAYER_WEIGHT` in `config.py` is used for players who have not been assigned a custom weight.
+
+Suggested ranges:
+
+150: elite player
+125: strong player
+100: average lobby player
+85: weaker or inconsistent player
+50: very new player
 Captain Draft
 
 Requirements:
@@ -180,7 +202,7 @@ Only the current captain is allowed to pick.
 
 While a draft is active:
 
-Players cannot sign up
+Players can sign up, but they go into the waiting room for the next draft
 Players cannot vote
 Players cannot volunteer as captain
 Players can still drop if needed

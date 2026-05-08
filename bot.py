@@ -1,48 +1,21 @@
 import discord
 import sqlite3
 import random
+import itertools
 from discord import app_commands
 import asyncio
 import time
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
 
 from config import (
     TOKEN,
     DB_FILE,
     ROLES,
     FRONTLINE_ROLES,
-    FLEX_ROLES,
     MIDLINE_ROLES,
-    BACKLINE_ROLES,
+    DEFAULT_PLAYER_WEIGHT,
+    AUTO_DRAFT_WEIGHT_BALANCE_MULTIPLIER,
 )
-
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "players.db")
 last_signup_time = None
-
-
-
-ROLES = [
-    "Frontline",
-    "Lyssa/Flex Derv",
-    "Mesmer",
-    "Elementalist",
-    "Necromancer",
-    "Ranger",
-    "Prot Monk",
-    "Heal Monk",
-    "Support/Flag (8)",
-]
-
-FRONTLINE_ROLES = {"Frontline"}
-FLEX_ROLES = {"Lyssa/Flex Derv"}
-MIDLINE_ROLES = {"Mesmer", "Elementalist", "Necromancer", "Ranger"}
-BACKLINE_ROLES = {"Prot Monk", "Heal Monk", "Support/Flag (8)"}
 
 players = {}
 lobby = []
@@ -52,6 +25,8 @@ captain_volunteers = []
 last_board_message_id = None
 draft_result = None
 captain_draft = None
+final_team_a = []
+final_team_b = []
 
 
 def init_db():
@@ -63,9 +38,17 @@ def init_db():
             discord_id INTEGER PRIMARY KEY,
             discord_name TEXT NOT NULL,
             ign TEXT NOT NULL,
-            roles TEXT NOT NULL
+            roles TEXT NOT NULL,
+            weight INTEGER NOT NULL DEFAULT 100
         )
     """)
+
+    try:
+        cursor.execute(
+            "ALTER TABLE players ADD COLUMN weight INTEGER NOT NULL DEFAULT 100"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS guild_config (
@@ -187,22 +170,27 @@ def save_board_message_id(guild_id, board_message_id):
 
     conn.commit()
     conn.close()
-def save_player(discord_id, discord_name, ign, roles):
+def save_player(discord_id, discord_name, ign, roles, weight=None):
+    if weight is None:
+        weight = players.get(discord_id, {}).get("weight", DEFAULT_PLAYER_WEIGHT)
+
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO players (discord_id, discord_name, ign, roles)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO players (discord_id, discord_name, ign, roles, weight)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             discord_name = excluded.discord_name,
             ign = excluded.ign,
-            roles = excluded.roles
+            roles = excluded.roles,
+            weight = excluded.weight
     """, (
         discord_id,
         discord_name,
         ign,
-        ",".join(roles)
+        ",".join(roles),
+        weight
     ))
 
     conn.commit()
@@ -213,16 +201,17 @@ def load_players():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT discord_id, discord_name, ign, roles FROM players")
+    cursor.execute("SELECT discord_id, discord_name, ign, roles, weight FROM players")
     rows = cursor.fetchall()
 
     conn.close()
 
-    for discord_id, discord_name, ign, roles_text in rows:
+    for discord_id, discord_name, ign, roles_text, weight in rows:
         players[discord_id] = {
             "discord_name": discord_name,
             "ign": ign,
             "roles": roles_text.split(",") if roles_text else [],
+            "weight": weight if weight is not None else DEFAULT_PLAYER_WEIGHT,
         }
 def save_lobby_state(guild_id):
     conn = sqlite3.connect(DB_FILE)
@@ -319,6 +308,28 @@ def player_label(user_id):
 
     return label
 
+
+def player_weight(user_id):
+    try:
+        return int(players.get(user_id, {}).get("weight", DEFAULT_PLAYER_WEIGHT))
+    except (TypeError, ValueError):
+        return DEFAULT_PLAYER_WEIGHT
+
+
+def team_weight(team):
+    return sum(player_weight(user_id) for user_id, _role in team)
+
+
+def team_weight_text(team_a, team_b):
+    weight_a = team_weight(team_a)
+    weight_b = team_weight(team_b)
+    return (
+        f"**Team A Weight:** {weight_a}\n"
+        f"**Team B Weight:** {weight_b}\n"
+        f"**Weight Difference:** {abs(weight_a - weight_b)}"
+    )
+
+
 def has_role_type(user_id, role_set):
     return bool(set(players[user_id]["roles"]) & role_set)
 
@@ -394,7 +405,7 @@ def build_draft_board_embed():
         f"{waiting_text}\n\n"
         f"## Votes\n"
         f"Captain Mode: **{captain_votes}**\n"
-        f"Random Draft: **{random_votes}**\n\n"
+        f"Auto-Draft: **{random_votes}**\n\n"
         f"## Captain Volunteers\n"
         f"{captain_text}"
         
@@ -546,7 +557,7 @@ class DraftBoardView(discord.ui.View):
 
     @discord.ui.button(label="Sign Up", style=discord.ButtonStyle.success, custom_id="draft_signup")
     async def signup_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await signup_player(interaction, silent=True)
+        result = await signup_player(interaction, silent=False)
         if result:
             await refresh_board(interaction)
 
@@ -562,9 +573,9 @@ class DraftBoardView(discord.ui.View):
         if result:
             await refresh_board(interaction)
 
-    @discord.ui.button(label="Vote Random", style=discord.ButtonStyle.primary, custom_id="draft_vote_random")
+    @discord.ui.button(label="Vote Auto-Draft", style=discord.ButtonStyle.primary, custom_id="draft_vote_random")
     async def vote_random_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        result = await vote_player(interaction, "random", "Random Draft", silent=True)
+        result = await vote_player(interaction, "random", "Auto-Draft", silent=True)
         if result:
             await refresh_board(interaction)
 
@@ -680,13 +691,6 @@ async def signup_player(interaction: discord.Interaction, silent=False):
 
     user_id = interaction.user.id
 
-    if captain_draft or draft_result:
-        await interaction.response.send_message(
-            "A draft is already active. Wait for Reset Draft before signing up.",
-            ephemeral=True
-        )
-        return False
-
     if user_id not in players:
         await interaction.response.send_message("Use `/name` first.", ephemeral=True)
         return False
@@ -703,10 +707,17 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    if len(lobby) < 16:
+    draft_active = captain_draft or draft_result
+
+    if draft_active:
+        waiting_room.append(user_id)
+        response_text = "A draft is active, so you were added to the waiting room for the next draft."
+    elif len(lobby) < 16:
         lobby.append(user_id)
+        response_text = "Signup updated."
     else:
         waiting_room.append(user_id)
+        response_text = "The active lobby is full, so you were added to the waiting room."
 
     last_signup_time = time.time()  # only set once here
     save_lobby_state(interaction.guild.id)
@@ -714,7 +725,7 @@ async def signup_player(interaction: discord.Interaction, silent=False):
     if silent:
         await interaction.response.defer()
     else:
-        await interaction.response.send_message("Signup updated.", ephemeral=True)
+        await interaction.response.send_message(response_text, ephemeral=True)
 
     return True
 
@@ -1067,24 +1078,27 @@ def score_match(team_a, team_b):
     score_a = score_team(team_a)
     score_b = score_team(team_b)
 
-    # Penalize uneven team quality
-    balance_penalty = abs(score_a - score_b)
+    # Penalize uneven role-fit quality.
+    role_balance_penalty = abs(score_a - score_b)
 
-    return score_a + score_b + balance_penalty
+    # Penalize uneven manual skill weights.
+    weight_balance_penalty = (
+        abs(team_weight(team_a) - team_weight(team_b))
+        * AUTO_DRAFT_WEIGHT_BALANCE_MULTIPLIER
+    )
+
+    return score_a + score_b + role_balance_penalty + weight_balance_penalty
 
 
-def generate_random_teams():
+def generate_auto_draft_teams():
     best_result = None
     best_score = None
+    anchor_player = lobby[0]
+    other_players = lobby[1:]
 
-    attempts = 1500
-
-    for _ in range(attempts):
-        shuffled = lobby[:]
-        random.shuffle(shuffled)
-
-        raw_team_a = shuffled[:8]
-        raw_team_b = shuffled[8:]
+    for team_a_rest in itertools.combinations(other_players, 7):
+        raw_team_a = [anchor_player, *team_a_rest]
+        raw_team_b = [p for p in lobby if p not in raw_team_a]
 
         team_a = assign_team_roles_for_score(raw_team_a)
         team_b = assign_team_roles_for_score(raw_team_b)
@@ -1095,18 +1109,18 @@ def generate_random_teams():
             best_score = score
             best_result = (team_a, team_b)
 
-            # Perfect enough, stop early
-            if best_score <= 50:
-                break
-
     team_a, team_b = best_result
 
     formation = {
-        "front": "Smart balanced",
+        "front": "Auto-Draft balanced",
         "score": best_score
     }
 
     return team_a, team_b, formation
+
+
+def generate_random_teams():
+    return generate_auto_draft_teams()
 
 class KickPlayerSelect(discord.ui.Select):
     def __init__(self):
@@ -1509,37 +1523,39 @@ class MyBot(discord.Client):
     def __init__(self):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
-async def inactivity_check_loop(self):
-    await self.wait_until_ready()
 
-    while not self.is_closed():
-        await asyncio.sleep(60)  # check every minute
+    async def inactivity_check_loop(self):
+        await self.wait_until_ready()
 
-        global last_signup_time
+        while not self.is_closed():
+            await asyncio.sleep(60)  # check every minute
 
-        if not last_signup_time:
-            continue
+            global last_signup_time
 
-        elapsed = time.time() - last_signup_time
+            if not last_signup_time:
+                continue
 
-        if elapsed >= 7200:  # 2 hours
-            print("Auto-wiping lobby due to inactivity.")
+            elapsed = time.time() - last_signup_time
 
-            lobby.clear()
-            waiting_room.clear()
-            votes.clear()
-            captain_volunteers.clear()
+            if elapsed >= 7200:  # 2 hours
+                print("Auto-wiping lobby due to inactivity.")
 
-            global draft_result, captain_draft, final_team_a, final_team_b
+                lobby.clear()
+                waiting_room.clear()
+                votes.clear()
+                captain_volunteers.clear()
 
-            draft_result = None
-            captain_draft = None
-            final_team_a = []
-            final_team_b = []
-            last_signup_time = None
+                global draft_result, captain_draft, final_team_a, final_team_b
 
-            for guild in self.guilds:
-                await post_new_draft_board(guild.id)
+                draft_result = None
+                captain_draft = None
+                final_team_a = []
+                final_team_b = []
+                last_signup_time = None
+
+                for guild in self.guilds:
+                    await post_new_draft_board(guild.id)
+
     async def setup_hook(self):
         init_db()
         load_players()
@@ -1615,7 +1631,8 @@ async def filltest(interaction: discord.Interaction):
         players[fake_id] = {
             "discord_name": f"TestUser{i+1}",
             "ign": f"Player{i+1}",
-            "roles": random.sample(role_pool, 3)
+            "roles": random.sample(role_pool, 3),
+            "weight": random.randint(70, 140)
         }
 
         lobby.append(fake_id)
@@ -1623,7 +1640,7 @@ async def filltest(interaction: discord.Interaction):
     last_signup_time = time.time()
 
     await interaction.response.send_message(
-        "Test lobby filled with 16 players.",
+        "Test lobby filled with 16 players with random roles and weights.",
         ephemeral=True
     )
     save_lobby_state(interaction.guild.id)
@@ -1702,6 +1719,7 @@ async def name(interaction: discord.Interaction, ign: str):
             "discord_name": interaction.user.display_name,
             "ign": ign,
             "roles": [],
+            "weight": DEFAULT_PLAYER_WEIGHT,
         }
     else:
         players[user_id]["ign"] = ign
@@ -1769,6 +1787,48 @@ async def role(
     )
 
 
+@bot.tree.command(name="setweight", description="Set a registered player's Auto-Draft weight.")
+@app_commands.describe(
+    member="Registered Discord user",
+    weight="Skill weight from 50 to 150. Average is 100."
+)
+async def setweight(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    weight: app_commands.Range[int, 50, 150],
+):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can set player weights.",
+            ephemeral=True
+        )
+        return
+
+    load_players()
+
+    if member.id not in players:
+        await interaction.response.send_message(
+            f"{member.mention} is not registered yet. They need to use `/name` first.",
+            ephemeral=True
+        )
+        return
+
+    players[member.id]["weight"] = int(weight)
+
+    save_player(
+        member.id,
+        member.display_name,
+        players[member.id]["ign"],
+        players[member.id]["roles"],
+        weight=int(weight)
+    )
+
+    await interaction.response.send_message(
+        f"Set **{players[member.id]['ign']}** to Auto-Draft weight **{int(weight)}**.",
+        ephemeral=True
+    )
+
+
 @bot.tree.command(name="signup", description="Join the GvG draft lobby.")
 async def signup(interaction: discord.Interaction):
     await signup_player(interaction)
@@ -1779,12 +1839,12 @@ async def drop(interaction: discord.Interaction):
     await drop_player(interaction)
 
 
-@bot.tree.command(name="vote", description="Vote for captain mode or random draft.")
+@bot.tree.command(name="vote", description="Vote for captain mode or auto-draft.")
 @app_commands.describe(mode="Choose draft mode")
 @app_commands.choices(
     mode=[
         app_commands.Choice(name="Captain Mode", value="captain"),
-        app_commands.Choice(name="Random Draft", value="random"),
+        app_commands.Choice(name="Auto-Draft", value="random"),
     ]
 )
 async def vote(interaction: discord.Interaction, mode: app_commands.Choice[str]):
@@ -1814,7 +1874,7 @@ async def draftboard(interaction: discord.Interaction):
     )
 
 async def start_captain_draft(interaction: discord.Interaction):
-    global captain_draft, draft_result
+    global captain_draft, draft_result, final_team_a, final_team_b
 
     if len(captain_volunteers) < 2:
         await interaction.response.send_message(
@@ -1858,15 +1918,16 @@ async def run_startdraft(interaction: discord.Interaction):
         await start_captain_draft(interaction)
         return
 
-    team_a, team_b, formation = generate_random_teams()
+    team_a, team_b, _formation = generate_auto_draft_teams()
 
     final_team_a = team_a
     final_team_b = team_b
 
     draft_result = (
-        "**Mode:** Random Draft\n\n"
+        "**Mode:** Auto-Draft\n\n"
         "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"
-        f"**Balancing Score:** {formation['score']} lower is better\n\n"
+        "**Balanced By:** role fit, role priority, and player weight\n"
+        f"{team_weight_text(team_a, team_b)}\n\n"
         "### Team A\n"
         f"{team_text(team_a)}\n\n"
         "### Team B\n"
@@ -1898,4 +1959,5 @@ async def resetlobby(interaction: discord.Interaction):
     await post_new_draft_board(interaction.guild.id)
 
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
