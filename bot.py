@@ -803,15 +803,49 @@ async def filltest(interaction: discord.Interaction):
 
     await post_new_draft_board(guild_id)
 @bot.tree.command(name="stats", description="View player draft stats.")
-@app_commands.describe(player="Optional player to view")
+@app_commands.describe(player="Player IGN")
 async def stats(
     interaction: discord.Interaction,
-    player: discord.Member = None
+    player: str = None
 ):
-    target = player or interaction.user
-
     guild_id = interaction.guild.id
-    stats_data = get_player_stats(guild_id, target.id)
+
+    target_id = interaction.user.id
+
+    if player:
+        found = False
+
+        for user_id, data in players.items():
+            if data["ign"].lower() == player.lower():
+                target_id = user_id
+                found = True
+                break
+
+        if not found:
+            await interaction.response.send_message(
+                f"No player found with IGN `{player}`.",
+                ephemeral=True
+            )
+            return
+
+    if target_id not in players:
+        await interaction.response.send_message(
+            "Player data not found.",
+            ephemeral=True
+        )
+        return
+
+    player_data = players[target_id]
+
+    member = interaction.guild.get_member(target_id)
+
+    discord_name = (
+        f"{member.display_name} (@{member.name})"
+        if member
+        else player_data["discord_name"]
+    )
+
+    stats_data = get_player_stats(guild_id, target_id)
 
     drafts_played = stats_data["drafts_played"]
     times_captain = stats_data["times_captain"]
@@ -842,8 +876,14 @@ async def stats(
         priority_text = "No assignment data."
 
     embed = discord.Embed(
-        title=f"{target.display_name} Draft Stats",
+        title=f"{player_data['ign']} Draft Stats",
         color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="Discord",
+        value=discord_name,
+        inline=False
     )
 
     embed.add_field(
