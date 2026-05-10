@@ -695,37 +695,7 @@ class MyBot(discord.Client):
         super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
 
-    async def inactivity_check_loop(self):
-        await self.wait_until_ready()
-
-        while not self.is_closed():
-            await asyncio.sleep(60)
-
-            for guild in self.guilds:
-                guild_id = guild.id
-                state = get_state(guild_id)
-
-                if not state.last_signup_time:
-                    continue
-
-                elapsed = time.time() - state.last_signup_time
-
-                if elapsed >= 7200:
-                    print(f"Auto-wiping lobby due to inactivity for guild {guild_id}.")
-
-                    state.lobby.clear()
-                    state.waiting_room.clear()
-                    state.votes.clear()
-                    state.captain_volunteers.clear()
-
-                    state.draft_result = None
-                    state.captain_draft = None
-                    state.final_team_a = []
-                    state.final_team_b = []
-                    state.last_signup_time = None
-
-                    save_lobby_state(guild_id)
-                    await post_new_draft_board(guild_id)
+    
 
     async def setup_hook(self):
         init_db()
@@ -734,7 +704,7 @@ class MyBot(discord.Client):
         await self.tree.sync()
 
         self.add_view(DraftBoardView(get_view_context))
-        self.loop.create_task(self.inactivity_check_loop())
+        ##self.loop.create_task(self.inactivity_check_loop()) This makes the lobby reset automatically if no one signs up for 2 hours.
 
 
 bot = MyBot()
