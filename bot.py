@@ -1191,21 +1191,33 @@ async def notify_drafted_players(interaction: discord.Interaction, team_a, team_
 
     async def notify_team(team, team_name):
         for user_id, assigned_role in team:
+            print(f"Checking DM for {user_id}")
+
             member = interaction.guild.get_member(user_id)
 
             if not member:
+                print(f"Member not found: {user_id}")
                 continue
 
+            print(f"Found member: {member.name}")
+
             if member.voice:
+                print(f"{member.name} already in voice")
                 continue
 
             try:
+                print(f"Sending DM to {member.name}")
+
                 await member.send(
                     f"The draft is ready.\n\n"
                     f"You were drafted to **Team {team_name}** as **{assigned_role}**.\n"
                     f"Please join Discord voice when you can."
                 )
-            except (discord.Forbidden, discord.HTTPException):
+
+                print(f"DM sent to {member.name}")
+
+            except Exception as e:
+                print(f"DM failed for {member.name}: {e}")
                 dm_failed.append(players[user_id]["ign"])
 
     await notify_team(team_a, "A")
