@@ -310,3 +310,62 @@ class CaptainDraft:
         self.pick_index += 1
 
         return True, "Pick accepted."
+def analyze_role_needs(players, lobby):
+    counts = {
+        "Prot Monk": 0,
+        "Heal Monk": 0,
+        "Support/Flag (8)": 0,
+        "Frontline": 0,
+        "Midline": 0,
+        "Flex": 0,
+    }
+
+    for user_id in lobby:
+        roles = players[user_id]["roles"]
+
+        if "Prot Monk" in roles:
+            counts["Prot Monk"] += 1
+
+        if "Heal Monk" in roles:
+            counts["Heal Monk"] += 1
+
+        if "Support/Flag (8)" in roles:
+            counts["Support/Flag (8)"] += 1
+
+        if "Frontline" in roles:
+            counts["Frontline"] += 1
+
+        if any(role in roles for role in MIDLINE_ROLES):
+            counts["Midline"] += 1
+
+        if "Lyssa/Flex Derv" in roles:
+            counts["Flex"] += 1
+
+    high = []
+    medium = []
+    low = []
+
+    if counts["Prot Monk"] < 2:
+        high.append("Prot Monk")
+
+    if counts["Heal Monk"] < 2:
+        high.append("Heal Monk")
+
+    if counts["Support/Flag (8)"] < 2:
+        high.append("Support/Flag")
+
+    if counts["Frontline"] < 4:
+        medium.append(f"Frontline ({counts['Frontline']}/4 preferred)")
+
+    if counts["Midline"] < 4:
+        medium.append(f"Midline ({counts['Midline']}/4 preferred)")
+
+    if counts["Flex"] < 2:
+        low.append("Flex/Lyssa optional")
+
+    return {
+        "high": high,
+        "medium": medium,
+        "low": low,
+        "counts": counts,
+    }

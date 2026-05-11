@@ -38,6 +38,7 @@ from draft_logic import (
     role_sort_key,
     optimize_team_roles,
     generate_random_teams,
+    analyze_role_needs,
 )
 from types import SimpleNamespace
 
@@ -151,6 +152,21 @@ def build_draft_board_embed(guild_id):
 
     captain_votes = list(votes.values()).count("captain")
     random_votes = list(votes.values()).count("random")
+    needs = analyze_role_needs(players, lobby)
+
+    needs_text = ""
+
+    if needs["high"]:
+        needs_text += "**High Priority:** " + ", ".join(needs["high"]) + "\n"
+
+    if needs["medium"]:
+        needs_text += "**Medium Priority:** " + ", ".join(needs["medium"]) + "\n"
+
+    if needs["low"]:
+        needs_text += "**Low Priority:** " + ", ".join(needs["low"]) + "\n"
+
+    if not needs_text:
+        needs_text = "Lobby role coverage looks good."
 
     if lobby:
         lobby_text = ""
@@ -188,8 +204,9 @@ def build_draft_board_embed(guild_id):
         "2. Use `/role` to pick your roles, in order of priority.\n\n"
         f"## Lobby — {len(lobby)}/16\n"
         f"{lobby_text}\n\n"
+        f"## Current Needs\n"
+        f"{needs_text}\n\n"
         f"## Waiting Room — {len(waiting_room)}\n"
-        f"{waiting_text}\n\n"
         f"## Votes\n"
         f"Captain Mode: **{captain_votes}**\n"
         f"Random Draft: **{random_votes}**\n\n"
@@ -676,6 +693,16 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
             "### Team B\n"
             f"{team_text(guild_id, state.final_team_b)}"
         )
+        dm_failed = await notify_drafted_players(
+            interaction,
+            state.final_team_a,
+            state.final_team_b
+        )
+
+        if dm_failed:
+            await interaction.channel.send(
+                "Could not DM:\n" + "\n".join(dm_failed)
+            )
 
         state.captain_draft = None
 
@@ -732,6 +759,43 @@ async def setup(interaction: discord.Interaction):
         ephemeral=True,
         view=SetupWizardView(get_view_context(interaction.guild.id))
     )
+@bot.tree.command(name="subnext", description="Move the next waiting room player into the lobby.")
+async def subnext(interaction: discord.Interaction):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can use this.",
+            ephemeral=True
+        )
+        return
+
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
+    if not state.waiting_room:
+        await interaction.response.send_message(
+            "Waiting room is empty.",
+            ephemeral=True
+        )
+        return
+
+    if len(state.lobby) >= 16:
+        await interaction.response.send_message(
+            "Lobby is already full. Kick or drop someone first.",
+            ephemeral=True
+        )
+        return
+
+    next_player = state.waiting_room.pop(0)
+    state.lobby.append(next_player)
+
+    save_lobby_state(guild_id)
+
+    await interaction.response.send_message(
+        f"Moved {player_label(guild_id, next_player)} from waiting room into the lobby.",
+        ephemeral=True
+    )
+
+    await post_new_draft_board(guild_id)
 @bot.tree.command(name="filltest", description="Fill lobby with test players.")
 async def filltest(interaction: discord.Interaction):
     if not is_draft_admin(interaction):
@@ -1122,7 +1186,32 @@ async def start_captain_draft(interaction: discord.Interaction):
     )
 
     await post_new_draft_board(guild_id)
+async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):
+    dm_failed = []
 
+    async def notify_team(team, team_name):
+        for user_id, assigned_role in team:
+            member = interaction.guild.get_member(user_id)
+
+            if not member:
+                continue
+
+            if member.voice:
+                continue
+
+            try:
+                await member.send(
+                    f"The draft is ready.\n\n"
+                    f"You were drafted to **Team {team_name}** as **{assigned_role}**.\n"
+                    f"Please join Discord voice when you can."
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                dm_failed.append(players[user_id]["ign"])
+
+    await notify_team(team_a, "A")
+    await notify_team(team_b, "B")
+
+    return dm_failed
 async def run_startdraft(interaction: discord.Interaction):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
@@ -1166,8 +1255,14 @@ async def run_startdraft(interaction: discord.Interaction):
         "### Team B\n"
         f"{team_text(guild_id, team_b)}"
     )
+    dm_failed = await notify_drafted_players(interaction, team_a, team_b)
 
-    await interaction.response.send_message("Draft started.", ephemeral=True)
+    msg = "Draft started."
+
+    if dm_failed:
+        msg += "\n\nCould not DM:\n" + "\n".join(dm_failed)
+
+    await interaction.response.send_message(msg, ephemeral=True)
 
     await post_new_draft_board(guild_id)
 
