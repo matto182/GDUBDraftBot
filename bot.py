@@ -1093,7 +1093,7 @@ async def draftstatus(interaction: discord.Interaction):
 async def draftboard(interaction: discord.Interaction):
     await interaction.response.send_message(
         embed=build_draft_board_embed(interaction.guild.id),
-        view=DraftBoardView(get_view_context())
+        view=DraftBoardView(get_view_context)
     )
 
 async def start_captain_draft(interaction: discord.Interaction):
