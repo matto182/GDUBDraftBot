@@ -1,264 +1,360 @@
-# GDUBDraftBot
-Discord Draft Bot for Guild Wars 1 GVG
+# GDUB Draft Bot
 
+A persistent multi-server Guild Wars 1 GvG draft bot for Discord.
 
-SETUP
+GDUB Draft Bot supports:
 
-GW1 GvG Draft Bot — Full Setup Guide
+* Randomized balanced drafts
+* Captain drafts
+* Persistent lobby state
+* Waiting room queue system
+* Draft statistics tracking
+* Role preference weighting
+* Smart team composition generation
+* Voice channel team moving
+* Draft-ready DM notifications
+* Multi-guild support
 
-This guide walks you through everything needed to get the bot working in your Discord server.
-Here are the recommended requirements before you begin setting up the bot in your server.
-1. A text channel where people can view the LobbyBoard.
-2. Two voice channels for Team A and Team B to use.
-3. A Bot role in the discord with permission to view all channels, move members, read messages, send messages, and manage messages.
-4. An officer or scrim organizer role in the discord for organizers to have permission to kick players from the draft, move players to their assigned voice channel, start the draft, reset the draft, and reset the lobby,
+---
 
-  Installation and setup.
-  1. Add the Bot to Your Server
+# Features
+
+## Draft Modes
+
+### Random Draft
+
+Automatically generates two balanced teams using:
+
+* Backline priority logic
+* Frontline balancing
+* Midline distribution
+* Player role preferences
+* Role scarcity awareness
+
+The draft generator prioritizes:
+
+1. Prot / Heal / Support
+2. Frontline
+3. Midline
+4. Flex
+
+### Captain Draft
+
+Players can volunteer as captains.
+
+If Captain votes exceed Random votes:
+
+* Two captains are selected
+* Captains alternate picks
+* Teams are auto-role-optimized after drafting
+
+---
+
+# Persistent Systems
+
+The bot stores:
+
+* Lobby state
+* Waiting room state
+* Draft history
+* Player statistics
+* Guild configuration
+
+The bot survives restarts without losing state.
+
+---
+
+# Statistics System
+
+Track:
+
+* Drafts played
+* Times captain
+* Roles played
+* Primary / secondary role usage
+* Fill/off-role assignments
+
+Commands:
+
+```text
+/stats
+/stats player:Relic
+```
+
+---
+
+# Commands
+
+## Player Commands
+
+### Set IGN
+
+```text
+/name
+```
+
+Sets your in-game name.
+
+---
+
+### Set Role Preferences
+
+```text
+/role
+```
+
+Choose your preferred roles in priority order.
+
+---
+
+### View Stats
+
+```text
+/stats
+/stats player:<IGN>
+```
+
+View player draft statistics.
+
+---
+
+## Draft Commands
+
+### Post Draft Board
+
+```text
+/draftboard
+```
+
+Posts the persistent interactive draft board.
+
+---
+
+### Start Draft
+
+```text
+/startdraft
+```
+
+Starts either:
+
+* Random Draft
+* Captain Draft
+
+based on current votes.
+
+---
+
+### Move Teams
+
+```text
+/move
+```
+
+Moves drafted players into configured voice channels.
+
+Players not currently in voice receive a DM notification.
+
+---
+
+### Pull Next Waiting Room Player
+
+```text
+/subnext
+```
+
+Moves the next waiting room player into the active lobby.
+
+Waiting room order is preserved.
+
+---
+
+### Reset Lobby
+
+```text
+/resetlobby
+```
+
+Clears:
+
+* Lobby
+* Waiting room
+* Draft state
+* Votes
+* Captains
+
+---
+
+## Admin Commands
+
+### Setup
+
+```text
+/setup
+```
+
+Configure:
+
+* Draft channel
+* Team A voice channel
+* Team B voice channel
+* Admin role
+
+---
+
+# Server Setup
+
+## 1. Invite the Bot
 
 Open your bot invite link in a browser.
 [https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=16985216&integration_type=0&scope=bot](https://discord.com/oauth2/authorize?client_id=1500734117531226112&permissions=2252076856109184&integration_type=0&scope=bot+applications.commands)
 
-Select the server you want to add the bot to
-Click Authorize
+Invite the bot to your Discord server.
 
-You must have Administrator or Manage Server permissions to do this.
+---
 
-2. Run the Setup Command
+## 2. Create Voice Channels
 
-In your Discord server, type:
-
-/setup
-
-This will start the setup process.
-
-The bot will ask you to select a few things. Each one is explained below.
-
-Select Draft Board Channel (text channel)
-
-This is the text channel where the draft system will live.
-
-The bot will post the draft board here
-Players will click buttons in this channel to join, vote, and draft
-This must be a text channel, not a voice channel
-
-What to pick:
-
-A channel like #gvg-draft, #drafts, or similar
-
-What happens after:
-
-The bot will continuously update one message in this channel
-That message is the main draft interface
-
-
-Select Team A Voice Channel
-
-This is the voice channel where Team A players will be moved after the draft.
-
-This must be a voice channel
-The bot will move players here automatically when you use “Move Teams”
-Players must already be connected to voice for this to work
-
-What to pick:
-
-A voice channel named something like Team A, Blue Team, or similar
-Select Team B Voice Channel
-
-This is the voice channel where Team B players will be moved after the draft.
-
-Same rules as Team A voice channel
-Must be a different voice channel
-
-What to pick:
-
-A voice channel named something like Team B, Red Team, etc.
-Select Draft Admin Role
-
-This is the role that is allowed to control the draft system.
-
-People with this role can:
-
-Reset the draft
-Kick players
-Move teams to voice channels
-
-What to pick:
-
-A trusted role like Officer, Leader, or Admin
-
-Important:
-
-Server Administrators can always use admin controls even without this role
-After Setup
-
-Once all selections are made:
-
-The bot saves your settings
-The draft board will be posted automatically in the channel you selected
-
-At this point, the system is ready to use.
-
-3. Player Setup (Required for Each Player)
-
-Before joining a draft, each player must register.
-
-Step 1 — Set your in-game name
-/name YourCharacterName
+Create two voice channels for teams.
 
 Example:
 
-/name Smelly Monk
+```text
+Team A
+Team B
+```
 
-Step 2 — Set your roles
+---
 
-/role
+## 3. Create a Draft Channel
 
-You can choose up to 5 roles.
-
-Order matters.
-
-The first role you select is your main role
-The second is your backup
-The third is your fallback, and so on
+Create a text channel where the draft board will live.
 
 Example:
 
-1. Prot Monk
-2. Heal Monk
-3. Support/Flag
+```text
+#drafts
+```
 
-The bot will try to assign you to your first role whenever possible.
+---
 
-4. Joining a Draft
-
-Go to the draft board channel.
-
-Use the buttons on the draft board:
-
-Sign Up → join the draft
-Drop → leave the draft
-Vote Captain → vote for captain mode
-Vote Random → vote for random draft
-Volunteer Captain → mark yourself as a captain
-Lobby Behavior
-The first 16 players go into the active lobby
-Any additional players go into the waiting room
-If someone leaves, the next player in the waiting room is automatically moved into the lobby
-5. Starting the Draft
-
-When there are 16 players:
-
-/startdraft
-Draft Modes
-Random Draft
-The bot automatically builds two teams
-It uses player role priorities to decide placements
-It tries to create a balanced team composition
-Captain Draft
-
-Requirements:
-
-At least 2 players must click “Volunteer Captain”
-Captain mode must win the vote
-
-How it works:
-
-Two captains are selected randomly from volunteers
-They take turns picking players
-The pick order follows a snake pattern:
-Captain A picks 1
-Captain B picks 2
-Captain A picks 2
-Captain B picks 2
-
-Captains pick players by clicking:
-
-Pick Player
-
-Only the current captain is allowed to pick.
-
-6. During the Draft
-
-While a draft is active:
-
-Players cannot sign up
-Players cannot vote
-Players cannot volunteer as captain
-Players can still drop if needed
-
-The draft board will show:
-
-Current teams
-Available players
-Whose turn it is to pick
-7. Moving Teams to Voice Channels
-
-After teams are created:
-
-Click:
-
-Admin Panel → Move Teams
-
-What happens:
-
-Team A players are moved to the Team A voice channel
-Team B players are moved to the Team B voice channel
-
-Requirements:
-
-Players must already be in a voice channel
-The bot must have permission to move members
-8. Admin Controls
-
-Click the Admin Panel button on the draft board.
-
-Available actions:
-
-Reset Draft
-Clears current teams
-Keeps players in the lobby
-Refills empty spots from waiting room
-Kick Player
-Removes a player from the lobby or waiting room
-Useful if someone leaves Discord without clicking Drop
-Move Teams
-Moves players into their assigned voice channels
-9. Full Reset
-
-If you want to completely restart everything:
-
-/resetlobby
-
-This clears:
-
-Lobby
-Waiting room
-Votes
-Draft state
-10. Common Issues
-Bot does not post draft board
+## 4. Run Setup Command
 
 Run:
 
+```text
 /setup
+```
 
-again
+Select:
 
-Bot cannot move players
+* Draft channel
+* Team A voice channel
+* Team B voice channel
+* Draft admin role
 
-Check:
+---
 
-Bot has “Move Members” permission
-Players are already in a voice channel
-Commands do not appear
-Wait 30–60 seconds
-Or remove and re-invite the bot
-That’s it
+## 5. Post Draft Board
 
-Once setup is complete, everything runs from the draft board. Players only need to:
+Run:
 
-register once
-click buttons to participate
+```text
+/draftboard
+```
 
-Admins only need the Admin Panel for control.
+This creates the persistent interactive draft board.
+
+---
+
+## 6. Player Setup
+
+Before signing up, players should configure:
+
+```text
+/name
+```
+
+and:
+
+```text
+/role
+```
+
+---
+
+# Commands
+
+## Required Intents
+
+Enable these in the Discord Developer Portal:
+
+* Server Members Intent
+* Message Content Intent
+* Presence Intent
+
+---
+
+# Recommended Permissions
+
+The bot should have:
+
+* Send Messages
+* Manage Messages
+* Move Members
+* Connect
+* View Channels
+* Send Messages in Threads
+* Use Slash Commands
+* Embed Links
+* Read Message History
+* Manage Channels (optional)
+
+---
+
+# Project Structure
+
+```text
+bot.py             -> Main bot logic and commands
+views.py           -> Discord UI views/buttons/selects
+draft_logic.py     -> Team generation and role balancing
+database.py        -> SQLite persistence layer
+state.py           -> Runtime guild state handling
+config.py          -> Role configuration/constants
+players.db         -> SQLite database
+```
+
+---
+
+# Tech Stack
+
+* Python 3.12+
+* discord.py
+* SQLite
+
+---
+
+# Roadmap
+
+Planned features:
+
+* Team synergy tracking
+* Draft history browser
+* Web dashboard
+* Match result tracking
+* Team chemistry analytics
+* Smart substitute recommendations
+* Draft quality grading
+
+---
+
+# License
+
+MIT License
+
+---
+
+# Credits
+
+Built for the Guild Wars 1 GvG community.
+
