@@ -9,7 +9,6 @@ class GuildState:
         self.final_team_a = []
         self.final_team_b = []
         self.last_signup_time = None
-        self.last_balance_debug = None
 
 
 guild_states = {}

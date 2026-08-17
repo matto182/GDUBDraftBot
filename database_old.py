@@ -22,18 +22,12 @@ def init_db():
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
             admin_role_id INTEGER,
-            owner_role_id INTEGER,
             board_message_id INTEGER
         )
     """)
 
     try:
         cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE guild_config ADD COLUMN owner_role_id INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -75,15 +69,6 @@ def init_db():
             role_priority_index INTEGER NOT NULL,
             was_captain INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (draft_id, user_id)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS player_weights (
-            guild_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            weight INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (guild_id, user_id)
         )
     """)
 
@@ -138,7 +123,6 @@ def save_guild_config(
     team_a_voice_channel_id=None,
     team_b_voice_channel_id=None,
     admin_role_id=None,
-    owner_role_id=None,
 ):
     current = get_guild_config(guild_id) or {}
 
@@ -146,7 +130,6 @@ def save_guild_config(
     team_a_voice_channel_id = team_a_voice_channel_id or current.get("team_a_voice_channel_id")
     team_b_voice_channel_id = team_b_voice_channel_id or current.get("team_b_voice_channel_id")
     admin_role_id = admin_role_id or current.get("admin_role_id")
-    owner_role_id = owner_role_id or current.get("owner_role_id")
     board_message_id = current.get("board_message_id")
 
     conn = sqlite3.connect(DB_FILE)
@@ -159,16 +142,14 @@ def save_guild_config(
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
-            owner_role_id,
             board_message_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET
             draft_channel_id = excluded.draft_channel_id,
             team_a_voice_channel_id = excluded.team_a_voice_channel_id,
             team_b_voice_channel_id = excluded.team_b_voice_channel_id,
             admin_role_id = excluded.admin_role_id,
-            owner_role_id = excluded.owner_role_id,
             board_message_id = excluded.board_message_id
     """, (
         guild_id,
@@ -176,7 +157,6 @@ def save_guild_config(
         team_a_voice_channel_id,
         team_b_voice_channel_id,
         admin_role_id,
-        owner_role_id,
         board_message_id,
     ))
 
@@ -194,7 +174,6 @@ def get_guild_config(guild_id):
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
-            owner_role_id,
             board_message_id
         FROM guild_config
         WHERE guild_id = ?
@@ -211,8 +190,7 @@ def get_guild_config(guild_id):
         "team_a_voice_channel_id": row[1],
         "team_b_voice_channel_id": row[2],
         "admin_role_id": row[3],
-        "owner_role_id": row[4],
-        "board_message_id": row[5],
+        "board_message_id": row[4],
     }
 
 
@@ -418,49 +396,3 @@ def get_player_stats(guild_id, user_id):
     conn.close()
 
     return stats
-
-def set_player_weight(guild_id, user_id, weight):
-    """Set a guild-specific hidden balancing weight for a player."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    if weight == 0:
-        cursor.execute(
-            "DELETE FROM player_weights WHERE guild_id = ? AND user_id = ?",
-            (guild_id, user_id),
-        )
-    else:
-        cursor.execute("""
-            INSERT INTO player_weights (guild_id, user_id, weight)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id, user_id) DO UPDATE SET
-                weight = excluded.weight
-        """, (guild_id, user_id, weight))
-
-    conn.commit()
-    conn.close()
-
-
-def get_player_weight(guild_id, user_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT weight FROM player_weights WHERE guild_id = ? AND user_id = ?",
-        (guild_id, user_id),
-    )
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else 0
-
-
-def get_player_weights(guild_id):
-    """Return non-zero hidden weights keyed by Discord user ID."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_id, weight FROM player_weights WHERE guild_id = ?",
-        (guild_id,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return {user_id: weight for user_id, weight in rows}

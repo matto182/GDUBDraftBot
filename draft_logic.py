@@ -1,240 +1,305 @@
 import random
 
-from config import (
-    FRONTLINE_ROLES,
-    MIDLINE_ROLES,
+from config import normalize_roles
+
+
+TEAM_FORMATIONS = (
+    (
+        "2 Front / 3 Mid / 3 Back",
+        [
+            "Prot Monk",
+            "Heal Monk",
+            "8 Support",
+            "Frontline",
+            "Frontline",
+            "Midline",
+            "Midline",
+            "Midline",
+        ],
+    ),
+    (
+        "3 Front / 2 Mid / 3 Back",
+        [
+            "Prot Monk",
+            "Heal Monk",
+            "8 Support",
+            "Frontline",
+            "Frontline",
+            "Frontline",
+            "Midline",
+            "Midline",
+        ],
+    ),
 )
 
+ROLE_ORDER = {
+    "Captain": 0,
+    "Frontline": 1,
+    "Midline": 2,
+    "Prot Monk": 3,
+    "Heal Monk": 4,
+    "8 Support": 5,
+    "Unassigned": 99,
+}
 
-def has_role_type(players, user_id, role_set):
-    return bool(set(players[user_id]["roles"]) & role_set)
+PREFERENCE_COST = {
+    0: 0,
+    1: 20,
+    2: 60,
+    3: 120,
+    4: 220,
+}
+
+OFF_ROLE_COST = 3000
+COMPOSITION_QUALITY_WEIGHT = 0.10
 
 
 def role_sort_key(assigned_role):
-    order = {
-        "Frontline": 1,
-        "Lyssa/Flex Derv": 2,
-        "Mesmer": 3,
-        "Elementalist": 3,
-        "Necromancer": 3,
-        "Ranger": 3,
-        "Prot Monk": 5,
-        "Heal Monk": 6,
-        "Support/Flag (8)": 7,
-        "Captain": 0,
-    }
-
-    return order.get(assigned_role, 99)
+    return ROLE_ORDER.get(assigned_role, 99)
 
 
 def role_priority_index(players, player_id, role):
-    player_roles = players[player_id]["roles"]
-
-    if role in player_roles:
-        return player_roles.index(role)
-
-    return 999
+    roles = normalize_roles(players[player_id].get("roles", []))
+    return roles.index(role) if role in roles else 999
 
 
-def best_role_for_slot(players, player_id, desired_roles):
-    player_roles = players[player_id]["roles"]
+def assignment_cost(players, player_id, slot_role):
+    priority = role_priority_index(players, player_id, slot_role)
 
-    for role in player_roles:
-        if role in desired_roles:
-            return role
+    if priority == 999:
+        return OFF_ROLE_COST
 
-    return None
+    return PREFERENCE_COST.get(priority, OFF_ROLE_COST)
 
 
-def assign_fallback_role(players, player_id):
-    return players[player_id]["roles"][0]
+def display_role_for_slot(players, player_id, slot_role):
+    roles = normalize_roles(players[player_id].get("roles", []))
+
+    if slot_role in roles:
+        return slot_role
+
+    if roles:
+        return roles[0]
+
+    return "Unassigned"
+
+
+def _solve_formation(players, team_players, slots):
+    """
+    Find the lowest-cost assignment of eight players to a preferred formation.
+
+    Missing role coverage is allowed. A player covering an unsupported slot
+    receives OFF_ROLE_COST rather than making the formation invalid.
+    """
+    memo = {}
+
+    def search(slot_index, used_mask):
+        key = (slot_index, used_mask)
+
+        if key in memo:
+            return memo[key]
+
+        if slot_index == len(slots):
+            return 0, []
+
+        slot_role = slots[slot_index]
+        local_best = None
+
+        for index, user_id in enumerate(team_players):
+            if used_mask & (1 << index):
+                continue
+
+            cost = assignment_cost(players, user_id, slot_role)
+
+            tail = search(
+                slot_index + 1,
+                used_mask | (1 << index),
+            )
+
+            if tail is None:
+                continue
+
+            total_cost = cost + tail[0]
+
+            entry = {
+                "user_id": user_id,
+                "slot_role": slot_role,
+                "display_role": display_role_for_slot(
+                    players,
+                    user_id,
+                    slot_role,
+                ),
+                "off_role": role_priority_index(
+                    players,
+                    user_id,
+                    slot_role,
+                ) == 999,
+            }
+
+            candidate = (
+                total_cost,
+                [entry] + tail[1],
+            )
+
+            if local_best is None or total_cost < local_best[0]:
+                local_best = candidate
+            elif total_cost == local_best[0] and random.random() < 0.5:
+                local_best = candidate
+
+        memo[key] = local_best
+        return local_best
+
+    return search(0, 0)
+
+
+def assign_best_team_roles(players, team_players):
+    """
+    Assign a team to whichever preferred formation produces the lowest penalty.
+
+    This always returns a result for any eight players.
+    """
+    if len(team_players) != 8:
+        raise ValueError("A draft team must contain exactly 8 players.")
+
+    best = None
+
+    for formation_name, slots in TEAM_FORMATIONS:
+        result = _solve_formation(players, team_players, slots)
+
+        if result is None:
+            continue
+
+        cost, internal_assignment = result
+
+        public_team = [
+            (
+                entry["user_id"],
+                entry["display_role"],
+            )
+            for entry in internal_assignment
+        ]
+
+        off_role_count = sum(
+            1
+            for entry in internal_assignment
+            if entry["off_role"]
+        )
+
+        candidate = {
+            "team": public_team,
+            "internal_assignment": internal_assignment,
+            "score": cost,
+            "formation": formation_name,
+            "off_role_count": off_role_count,
+        }
+
+        if best is None or candidate["score"] < best["score"]:
+            best = candidate
+        elif candidate["score"] == best["score"] and random.random() < 0.5:
+            best = candidate
+
+    if best is None:
+        fallback_team = []
+
+        for user_id in team_players:
+            roles = normalize_roles(players[user_id].get("roles", []))
+            fallback_team.append(
+                (
+                    user_id,
+                    roles[0] if roles else "Unassigned",
+                )
+            )
+
+        return {
+            "team": fallback_team,
+            "internal_assignment": [],
+            "score": OFF_ROLE_COST * 8,
+            "formation": "Fallback",
+            "off_role_count": 8,
+        }
+
+    return best
 
 
 def optimize_team_roles(players, team):
-    desired_slots = [
-        ["Frontline"],
-        ["Frontline"],
-        ["Lyssa/Flex Derv"],
-        MIDLINE_ROLES,
-        MIDLINE_ROLES,
-        ["Prot Monk"],
-        ["Heal Monk"],
-        ["Support/Flag (8)"],
+    team_players = [
+        user_id
+        for user_id, _role in team
     ]
 
-    unassigned = [user_id for user_id, _ in team]
-    optimized = []
+    if len(team_players) != 8:
+        return team
 
-    for desired_roles in desired_slots:
-        candidates = []
+    result = assign_best_team_roles(
+        players,
+        team_players,
+    )
 
-        for user_id in unassigned:
-            role = best_role_for_slot(players, user_id, desired_roles)
-
-            if role:
-                candidates.append((
-                    user_id,
-                    role,
-                    role_priority_index(players, user_id, role)
-                ))
-
-        if candidates:
-            best_priority = min(c[2] for c in candidates)
-            best_candidates = [c for c in candidates if c[2] == best_priority]
-            picked_id, assigned_role, _ = random.choice(best_candidates)
-
-            optimized.append((picked_id, assigned_role))
-            unassigned.remove(picked_id)
-
-    for user_id in unassigned:
-        optimized.append((user_id, assign_fallback_role(players, user_id)))
-
-    return optimized
+    return result["team"]
 
 
-def count_assigned(team, role_set):
-    return len([1 for _, role in team if role in role_set])
+def team_weight(team_result, player_weights):
+    return sum(
+        player_weights.get(user_id, 0)
+        for user_id, _role in team_result["team"]
+    )
 
 
-def get_priority_role_for_slot(players, player_id, desired_roles):
-    player_roles = players[player_id]["roles"]
+def effective_team_strength(team_result, player_weights):
+    hidden_weight = team_weight(
+        team_result,
+        player_weights,
+    )
 
-    for role in player_roles:
-        if role in desired_roles:
-            return role
+    composition_penalty = team_result["score"]
 
-    return None
-
-
-def assign_team_roles_for_score(players, team_players):
-    desired_slots = [
-        ["Prot Monk"],
-        ["Heal Monk"],
-        ["Support/Flag (8)"],
-        ["Frontline"],
-        ["Frontline"],
-        MIDLINE_ROLES,
-        MIDLINE_ROLES,
-        ["Lyssa/Flex Derv", "Frontline", "Mesmer", "Elementalist", "Necromancer", "Ranger"],
-    ]
-
-    unassigned = team_players[:]
-    assigned = []
-
-    for desired_roles in desired_slots:
-        candidates = []
-
-        for user_id in unassigned:
-            role = get_priority_role_for_slot(players, user_id, desired_roles)
-
-            if role:
-                candidates.append((
-                    user_id,
-                    role,
-                    role_priority_index(players, user_id, role)
-                ))
-
-        if candidates:
-            best_priority = min(c[2] for c in candidates)
-            best_candidates = [c for c in candidates if c[2] == best_priority]
-            picked_id, assigned_role, _priority = random.choice(best_candidates)
-
-            assigned.append((picked_id, assigned_role))
-            unassigned.remove(picked_id)
-
-    for user_id in unassigned:
-        assigned.append((user_id, assign_fallback_role(players, user_id)))
-
-    return assigned
+    return hidden_weight - composition_penalty
 
 
-def score_team(players, team):
-    score = 0
-    assigned_roles = [role for _user_id, role in team]
+def score_match(team_a_result, team_b_result, player_weights):
+    strength_a = effective_team_strength(
+        team_a_result,
+        player_weights,
+    )
 
-    # Backline is the highest priority.
-    required_backline = ["Prot Monk", "Heal Monk", "Support/Flag (8)"]
+    strength_b = effective_team_strength(
+        team_b_result,
+        player_weights,
+    )
 
-    for role in required_backline:
-        count = assigned_roles.count(role)
+    strength_difference = abs(
+        strength_a - strength_b
+    )
 
-        if count == 0:
-            score += 3000
-        elif count > 1:
-            score += 400 * (count - 1)
+    composition_total = (
+        team_a_result["score"]
+        + team_b_result["score"]
+    )
 
-    # Frontline is second most important.
-    frontline_count = assigned_roles.count("Frontline")
-
-    if frontline_count == 0:
-        score += 2500
-    elif frontline_count == 1:
-        score += 1200
-    elif frontline_count == 2:
-        score += 0
-    elif frontline_count == 3:
-        score += 50
-    else:
-        score += 300 * (frontline_count - 3)
-
-    # Midline is important, but less important than backline/frontline.
-    mid_count = len([r for r in assigned_roles if r in MIDLINE_ROLES])
-
-    if mid_count == 0:
-        score += 1200
-    elif mid_count == 1:
-        score += 400
-    elif mid_count == 2:
-        score += 0
-    elif mid_count == 3:
-        score += 75
-    else:
-        score += 250 * (mid_count - 3)
-
-    # Flex is useful, but least important.
-    flex_count = assigned_roles.count("Lyssa/Flex Derv")
-
-    if flex_count == 0:
-        score += 100
-    elif flex_count == 1:
-        score += 0
-    else:
-        score += 150 * (flex_count - 1)
-
-    # Role preference penalty.
-    for user_id, assigned_role in team:
-        priority = role_priority_index(players, user_id, assigned_role)
-
-        if priority == 0:
-            score += 0
-        elif priority == 1:
-            score += 20
-        elif priority == 2:
-            score += 60
-        elif priority == 3:
-            score += 120
-        elif priority == 4:
-            score += 220
-        else:
-            score += 400
-
-    return score
+    return (
+        strength_difference
+        + (composition_total * COMPOSITION_QUALITY_WEIGHT)
+    )
 
 
-def score_match(players, team_a, team_b):
-    score_a = score_team(players, team_a)
-    score_b = score_team(players, team_b)
+def generate_random_teams(players, lobby, player_weights=None):
+    """
+    Always split a full 16-player lobby into two teams of 8.
 
-    balance_penalty = abs(score_a - score_b)
+    Role formations and hidden weights are optimization signals only.
+    No role composition can block the draft.
+    """
+    player_weights = player_weights or {}
 
-    return score_a + score_b + balance_penalty
+    if len(lobby) != 16:
+        raise ValueError(
+            "Random draft requires exactly 16 players."
+        )
 
-
-def generate_random_teams(players, lobby):
     best_result = None
     best_score = None
 
-    attempts = 1500
+    attempts = 500
 
     for _ in range(attempts):
         shuffled = lobby[:]
@@ -243,41 +308,103 @@ def generate_random_teams(players, lobby):
         raw_team_a = shuffled[:8]
         raw_team_b = shuffled[8:]
 
-        team_a = assign_team_roles_for_score(players, raw_team_a)
-        team_b = assign_team_roles_for_score(players, raw_team_b)
+        team_a_result = assign_best_team_roles(
+            players,
+            raw_team_a,
+        )
 
-        score = score_match(players, team_a, team_b)
+        team_b_result = assign_best_team_roles(
+            players,
+            raw_team_b,
+        )
+
+        score = score_match(
+            team_a_result,
+            team_b_result,
+            player_weights,
+        )
 
         if best_score is None or score < best_score:
             best_score = score
-            best_result = (team_a, team_b)
+            best_result = (
+                team_a_result,
+                team_b_result,
+            )
 
-            if best_score <= 50:
+            if best_score == 0:
                 break
 
-    team_a, team_b = best_result
+    team_a_result, team_b_result = best_result
 
     formation = {
-        "front": "Smart balanced",
-        "score": best_score
+        "score": round(best_score, 2),
+        "team_a": team_a_result["formation"],
+        "team_b": team_b_result["formation"],
+
+        # Hidden/internal diagnostics only.
+        "team_a_weight": team_weight(
+            team_a_result,
+            player_weights,
+        ),
+        "team_b_weight": team_weight(
+            team_b_result,
+            player_weights,
+        ),
+        "team_a_effective_strength": effective_team_strength(
+            team_a_result,
+            player_weights,
+        ),
+        "team_b_effective_strength": effective_team_strength(
+            team_b_result,
+            player_weights,
+        ),
+        "team_a_composition_penalty": team_a_result["score"],
+        "team_b_composition_penalty": team_b_result["score"],
+        "team_a_off_role_count": team_a_result["off_role_count"],
+        "team_b_off_role_count": team_b_result["off_role_count"],
     }
 
-    return team_a, team_b, formation
+    return (
+        team_a_result["team"],
+        team_b_result["team"],
+        formation,
+    )
 
 
 class CaptainDraft:
     def __init__(self, lobby, captain_a, captain_b):
         self.captain_a = captain_a
         self.captain_b = captain_b
-        self.team_a = [(captain_a, "Captain")]
-        self.team_b = [(captain_b, "Captain")]
-        self.available = [p for p in lobby if p not in [captain_a, captain_b]]
+
+        self.team_a = [
+            (captain_a, "Captain")
+        ]
+
+        self.team_b = [
+            (captain_b, "Captain")
+        ]
+
+        self.available = [
+            player_id
+            for player_id in lobby
+            if player_id not in [
+                captain_a,
+                captain_b,
+            ]
+        ]
+
         self.pick_index = 0
         self.pick_order = self.build_pick_order()
 
     def build_pick_order(self):
         order = []
-        pattern = [self.captain_a, self.captain_b, self.captain_b, self.captain_a]
+
+        pattern = [
+            self.captain_a,
+            self.captain_b,
+            self.captain_b,
+            self.captain_a,
+        ]
 
         while len(order) < 14:
             order.extend(pattern)
@@ -287,81 +414,138 @@ class CaptainDraft:
     def current_picker(self):
         if self.pick_index >= len(self.pick_order):
             return None
-        return self.pick_order[self.pick_index]
+
+        return self.pick_order[
+            self.pick_index
+        ]
 
     def is_complete(self):
-        return len(self.team_a) == 8 and len(self.team_b) == 8
+        return (
+            len(self.team_a) == 8
+            and len(self.team_b) == 8
+        )
 
-    def pick_player(self, players, picker_id, picked_id):
+    def pick_player(
+        self,
+        players,
+        picker_id,
+        picked_id,
+    ):
         if picker_id != self.current_picker():
             return False, "It is not your pick."
 
         if picked_id not in self.available:
             return False, "That player is not available."
 
-        assigned_role = players[picked_id]["roles"][0]
+        roles = normalize_roles(
+            players[picked_id].get(
+                "roles",
+                [],
+            )
+        )
+
+        assigned_role = (
+            roles[0]
+            if roles
+            else "Unassigned"
+        )
 
         if picker_id == self.captain_a:
-            self.team_a.append((picked_id, assigned_role))
+            self.team_a.append(
+                (
+                    picked_id,
+                    assigned_role,
+                )
+            )
         else:
-            self.team_b.append((picked_id, assigned_role))
+            self.team_b.append(
+                (
+                    picked_id,
+                    assigned_role,
+                )
+            )
 
-        self.available.remove(picked_id)
+        self.available.remove(
+            picked_id
+        )
+
         self.pick_index += 1
 
         return True, "Pick accepted."
+
+
 def analyze_role_needs(players, lobby):
+    """
+    Report preferred coverage only.
+
+    These values are informational and never prevent a draft from starting.
+    """
     counts = {
-        "Prot Monk": 0,
-        "Heal Monk": 0,
-        "Support/Flag (8)": 0,
-        "Frontline": 0,
-        "Midline": 0,
-        "Flex": 0,
+        role: 0
+        for role in [
+            "Frontline",
+            "Midline",
+            "Prot Monk",
+            "Heal Monk",
+            "8 Support",
+        ]
     }
 
     for user_id in lobby:
-        roles = players[user_id]["roles"]
+        roles = set(
+            normalize_roles(
+                players[user_id].get(
+                    "roles",
+                    [],
+                )
+            )
+        )
 
-        if "Prot Monk" in roles:
-            counts["Prot Monk"] += 1
-
-        if "Heal Monk" in roles:
-            counts["Heal Monk"] += 1
-
-        if "Support/Flag (8)" in roles:
-            counts["Support/Flag (8)"] += 1
-
-        if "Frontline" in roles:
-            counts["Frontline"] += 1
-
-        if any(role in roles for role in MIDLINE_ROLES):
-            counts["Midline"] += 1
-
-        if "Lyssa/Flex Derv" in roles:
-            counts["Flex"] += 1
+        for role in roles:
+            if role in counts:
+                counts[role] += 1
 
     high = []
     medium = []
     low = []
 
-    if counts["Prot Monk"] < 2:
-        high.append("Prot Monk")
-
-    if counts["Heal Monk"] < 2:
-        high.append("Heal Monk")
-
-    if counts["Support/Flag (8)"] < 2:
-        high.append("Support/Flag")
+    for role in [
+        "Prot Monk",
+        "Heal Monk",
+        "8 Support",
+    ]:
+        if counts[role] < 2:
+            high.append(
+                f"{role} ({counts[role]}/2 preferred)"
+            )
 
     if counts["Frontline"] < 4:
-        medium.append(f"Frontline ({counts['Frontline']}/4 preferred)")
+        high.append(
+            f"Frontline ({counts['Frontline']}/4 preferred)"
+        )
+    elif counts["Frontline"] < 6:
+        medium.append(
+            f"Frontline ({counts['Frontline']}/6 ideal flexibility)"
+        )
 
     if counts["Midline"] < 4:
-        medium.append(f"Midline ({counts['Midline']}/4 preferred)")
+        high.append(
+            f"Midline ({counts['Midline']}/4 preferred)"
+        )
+    elif counts["Midline"] < 6:
+        medium.append(
+            f"Midline ({counts['Midline']}/6 ideal flexibility)"
+        )
 
-    if counts["Flex"] < 2:
-        low.append("Flex/Lyssa optional")
+    combined_front_mid = (
+        counts["Frontline"]
+        + counts["Midline"]
+    )
+
+    if combined_front_mid < 10:
+        medium.append(
+            f"Front/Mid coverage ({combined_front_mid}/10 preferred)"
+        )
 
     return {
         "high": high,
