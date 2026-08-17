@@ -528,10 +528,6 @@ async def move_teams_to_voice(interaction: discord.Interaction):
         )
         return
 
-    # Moving multiple members can take longer than Discord allows for the
-    # initial interaction response. Defer before starting the move operations.
-    await interaction.response.defer(ephemeral=True)
-
     moved = 0
     failed = []
 
@@ -562,7 +558,7 @@ async def move_teams_to_voice(interaction: discord.Interaction):
     if failed:
         msg += "\n\nCould not move:\n" + "\n".join(failed)
 
-    await interaction.followup.send(msg, ephemeral=True)
+    await interaction.response.send_message(msg, ephemeral=True)
 async def wipe_lobby(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
@@ -920,11 +916,6 @@ async def run_startdraft(interaction: discord.Interaction):
         await start_captain_draft(interaction)
         return
 
-    # Random team generation can take longer than Discord's initial
-    # interaction-response window. Acknowledge the button immediately, then
-    # use follow-up messages once the draft work finishes.
-    await interaction.response.defer(ephemeral=True)
-
     try:
         team_a, team_b, formation = generate_random_teams(
             players,
@@ -932,7 +923,7 @@ async def run_startdraft(interaction: discord.Interaction):
             get_player_weights(guild_id),
         )
     except ValueError as error:
-        await interaction.followup.send(str(error), ephemeral=True)
+        await interaction.response.send_message(str(error), ephemeral=True)
         return
 
     state.final_team_a = team_a
@@ -992,7 +983,7 @@ async def run_startdraft(interaction: discord.Interaction):
     if dm_failed:
         msg += "\n\nCould not DM:\n" + "\n".join(dm_failed)
 
-    await interaction.followup.send(msg, ephemeral=True)
+    await interaction.response.send_message(msg, ephemeral=True)
 
     await post_new_draft_board(guild_id)
 
