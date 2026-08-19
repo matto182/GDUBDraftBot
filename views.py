@@ -375,11 +375,11 @@ class SetupAdminRoleView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Draft Admin role saved: {role.mention}\n\nNow select the Owner role.",
-            ephemeral=True,
-            view=SetupOwnerRoleView(self.ctx)
+            f"Draft Admin role saved: {role.mention}\n\nSetup complete. Posting draft board.",
+            ephemeral=True
         )
 
+        await self.ctx.post_new_draft_board(interaction.guild.id)
 
 class SetupOwnerRoleView(discord.ui.View):
     def __init__(self, ctx):
@@ -394,7 +394,10 @@ class SetupOwnerRoleView(discord.ui.View):
     )
     async def select_owner_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
+            await interaction.response.send_message(
+                "Only server admins can run setup.",
+                ephemeral=True
+            )
             return
 
         role = select.values[0]

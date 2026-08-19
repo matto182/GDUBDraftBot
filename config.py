@@ -24,30 +24,3 @@ FRONTLINE_ROLES = {"Frontline"}
 FLEX_ROLES = {"Lyssa/Flex Derv"}
 MIDLINE_ROLES = {"Mesmer", "Elementalist", "Necromancer", "Ranger"}
 BACKLINE_ROLES = {"Prot Monk", "Heal Monk", "Support/Flag (8)"}
-
-
-def normalize_roles(roles):
-    if roles is None:
-        return []
-
-    if isinstance(roles, str):
-        roles = roles.split(",")
-
-    normalized = []
-
-    for role in roles:
-        if role is None:
-            continue
-
-        role = str(role).strip()
-
-        if not role:
-            continue
-
-        if role not in ROLES:
-            continue
-
-        if role not in normalized:
-            normalized.append(role)
-
-    return normalized

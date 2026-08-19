@@ -31,6 +31,10 @@ from database import (
     load_lobby_state_from_db,
     save_completed_draft,
     get_player_stats,
+    get_guild_player_weights,
+    get_player_weight,
+    set_player_weight,
+    mark_player_has_played_backline,
 )
 
 from draft_logic import (
@@ -618,6 +622,16 @@ def is_draft_admin(interaction: discord.Interaction):
     admin_role_id = config["admin_role_id"]
 
     return any(role.id == admin_role_id for role in interaction.user.roles)
+def is_bot_owner(member, guild_id):
+    config = get_guild_config(guild_id)
+
+    if not config or not config.get("owner_role_id"):
+        return False
+
+    owner_role_id = config["owner_role_id"]
+    return any(role.id == owner_role_id for role in getattr(member, "roles", []))
+
+
 def get_captain_draft():
     return captain_draft
 async def refresh_board(interaction: discord.Interaction):
@@ -720,7 +734,9 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
      
 class MyBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     
@@ -845,7 +861,8 @@ async def filltest(interaction: discord.Interaction):
         players[fake_id] = {
             "discord_name": f"TestUser{i+1}",
             "ign": ign,
-            "roles": roles
+            "roles": roles,
+            "has_played_backline": bool(set(roles) & BACKLINE_ROLES),
         }
 
         save_player(
@@ -1010,6 +1027,104 @@ async def adminboard(interaction: discord.Interaction):
         ephemeral=True
     )    
 @bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.guild:
+        return
+
+    content = message.content.strip()
+
+    if not (content.startswith("!adjust") or content.startswith("!debugweights")):
+        return
+
+    if not is_bot_owner(message.author, message.guild.id):
+        return
+
+    try:
+        await message.delete()
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+    if content.startswith("!adjust"):
+        parts = content.split()
+
+        if len(parts) < 3:
+            await message.author.send(
+                "Usage: `!adjust <IGN> <amount>`\\nExample: `!adjust Relic 1`"
+            )
+            return
+
+        try:
+            amount = int(parts[-1])
+        except ValueError:
+            await message.author.send("Weight adjustment must be an integer.")
+            return
+
+        if amount < -3 or amount > 3:
+            await message.author.send("Adjustment must be between -3 and 3.")
+            return
+
+        ign = " ".join(parts[1:-1]).strip()
+        target_id = None
+
+        for user_id, data in players.items():
+            if data["ign"].lower() == ign.lower():
+                target_id = user_id
+                break
+
+        if target_id is None:
+            await message.author.send(f"No player found with IGN `{ign}`.")
+            return
+
+        current = get_player_weight(message.guild.id, target_id)
+        updated = max(-3, min(3, current + amount))
+        set_player_weight(message.guild.id, target_id, updated)
+
+        await message.author.send(
+            f"Hidden weight updated for **{players[target_id]['ign']}**: "
+            f"`{current:+d}` -> `{updated:+d}`"
+        )
+        return
+
+    if content == "!debugweights":
+        weights = get_guild_player_weights(message.guild.id)
+
+        if not weights:
+            await message.author.send("No non-zero hidden weights are set for this server.")
+            return
+
+        rows = []
+
+        for user_id, weight in sorted(
+            weights.items(),
+            key=lambda item: (
+                -item[1],
+                players.get(item[0], {}).get("ign", "").lower()
+            )
+        ):
+            player = players.get(user_id)
+
+            if not player:
+                continue
+
+            backline_flag = "BL" if player.get("has_played_backline", False) else "--"
+            rows.append(f"{weight:+d}  [{backline_flag}]  {player['ign']}")
+
+        text = (
+            "Hidden weights (`BL` = has played backline):\\n```\\n"
+            + "\\n".join(rows)
+            + "\\n```"
+        )
+
+        if len(text) <= 1900:
+            await message.author.send(text)
+        else:
+            for i in range(0, len(rows), 40):
+                await message.author.send(
+                    "```\\n" + "\\n".join(rows[i:i + 40]) + "\\n```"
+                )
+
+
+@bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
@@ -1050,6 +1165,7 @@ async def name(interaction: discord.Interaction, ign: str):
             "discord_name": interaction.user.display_name,
             "ign": ign,
             "roles": [],
+            "has_played_backline": False,
         }
     else:
         players[user_id]["ign"] = ign
@@ -1104,11 +1220,18 @@ async def role(
 
     players[user_id]["roles"] = chosen
 
+    chose_backline = bool(set(chosen) & BACKLINE_ROLES)
+
+    if chose_backline:
+        players[user_id]["has_played_backline"] = True
+        mark_player_has_played_backline(user_id)
+
     save_player(
         user_id,
         interaction.user.display_name,
         players[user_id]["ign"],
-        players[user_id]["roles"]
+        players[user_id]["roles"],
+        has_played_backline=players[user_id].get("has_played_backline", False)
     )
 
     await interaction.response.send_message(
@@ -1245,7 +1368,13 @@ async def run_startdraft(interaction: discord.Interaction):
         await start_captain_draft(interaction)
         return
 
-    team_a, team_b, formation = generate_random_teams(players, state.lobby)
+    hidden_weights = get_guild_player_weights(guild_id)
+
+    team_a, team_b, formation = generate_random_teams(
+        players,
+        state.lobby,
+        weights=hidden_weights
+    )
 
     state.final_team_a = team_a
     state.final_team_b = team_b
@@ -1261,8 +1390,6 @@ async def run_startdraft(interaction: discord.Interaction):
 
     state.draft_result = (
         "**Mode:** Random Draft\n\n"
-        "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"
-        f"**Balancing Score:** {formation['score']} lower is better\n\n"
         "### Team A\n"
         f"{team_text(guild_id, team_a)}\n\n"
         "### Team B\n"

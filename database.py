@@ -11,9 +11,17 @@ def init_db():
             discord_id INTEGER PRIMARY KEY,
             discord_name TEXT NOT NULL,
             ign TEXT NOT NULL,
-            roles TEXT NOT NULL
+            roles TEXT NOT NULL,
+            has_played_backline INTEGER NOT NULL DEFAULT 0
         )
     """)
+
+    try:
+        cursor.execute(
+            "ALTER TABLE players ADD COLUMN has_played_backline INTEGER NOT NULL DEFAULT 0"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS guild_config (
@@ -22,12 +30,19 @@ def init_db():
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
             admin_role_id INTEGER,
+            owner_role_id INTEGER,
             board_message_id INTEGER
         )
     """)
 
     try:
         cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+
+    try:
+        cursor.execute("ALTER TABLE guild_config ADD COLUMN owner_role_id INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -85,22 +100,43 @@ def init_db():
     conn.close()
 
 
-def save_player(discord_id, discord_name, ign, roles):
+def save_player(discord_id, discord_name, ign, roles, has_played_backline=None):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
+    normalized_roles = normalize_roles(roles)
+
+    if has_played_backline is None:
+        cursor.execute(
+            "SELECT has_played_backline FROM players WHERE discord_id = ?",
+            (discord_id,)
+        )
+        row = cursor.fetchone()
+        has_played_backline = row[0] if row else 0
+
     cursor.execute("""
-        INSERT INTO players (discord_id, discord_name, ign, roles)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO players (
+            discord_id,
+            discord_name,
+            ign,
+            roles,
+            has_played_backline
+        )
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             discord_name = excluded.discord_name,
             ign = excluded.ign,
-            roles = excluded.roles
+            roles = excluded.roles,
+            has_played_backline = CASE
+                WHEN players.has_played_backline = 1 THEN 1
+                ELSE excluded.has_played_backline
+            END
     """, (
         discord_id,
         discord_name,
         ign,
-        ",".join(normalize_roles(roles))
+        ",".join(normalized_roles),
+        1 if has_played_backline else 0
     ))
 
     conn.commit()
@@ -111,18 +147,27 @@ def load_players_into(players):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT discord_id, discord_name, ign, roles FROM players")
+    cursor.execute("""
+        SELECT
+            discord_id,
+            discord_name,
+            ign,
+            roles,
+            has_played_backline
+        FROM players
+    """)
     rows = cursor.fetchall()
 
     conn.close()
 
     players.clear()
 
-    for discord_id, discord_name, ign, roles_text in rows:
+    for discord_id, discord_name, ign, roles_text, has_played_backline in rows:
         players[discord_id] = {
             "discord_name": discord_name,
             "ign": ign,
             "roles": normalize_roles(roles_text),
+            "has_played_backline": bool(has_played_backline),
         }
 
 
@@ -132,6 +177,7 @@ def save_guild_config(
     team_a_voice_channel_id=None,
     team_b_voice_channel_id=None,
     admin_role_id=None,
+    owner_role_id=None,
 ):
     current = get_guild_config(guild_id) or {}
 
@@ -139,6 +185,7 @@ def save_guild_config(
     team_a_voice_channel_id = team_a_voice_channel_id or current.get("team_a_voice_channel_id")
     team_b_voice_channel_id = team_b_voice_channel_id or current.get("team_b_voice_channel_id")
     admin_role_id = admin_role_id or current.get("admin_role_id")
+    owner_role_id = owner_role_id or current.get("owner_role_id")
     board_message_id = current.get("board_message_id")
 
     conn = sqlite3.connect(DB_FILE)
@@ -151,14 +198,16 @@ def save_guild_config(
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
+            owner_role_id,
             board_message_id
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET
             draft_channel_id = excluded.draft_channel_id,
             team_a_voice_channel_id = excluded.team_a_voice_channel_id,
             team_b_voice_channel_id = excluded.team_b_voice_channel_id,
             admin_role_id = excluded.admin_role_id,
+            owner_role_id = excluded.owner_role_id,
             board_message_id = excluded.board_message_id
     """, (
         guild_id,
@@ -166,6 +215,7 @@ def save_guild_config(
         team_a_voice_channel_id,
         team_b_voice_channel_id,
         admin_role_id,
+        owner_role_id,
         board_message_id,
     ))
 
@@ -183,6 +233,7 @@ def get_guild_config(guild_id):
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
+            owner_role_id,
             board_message_id
         FROM guild_config
         WHERE guild_id = ?
@@ -199,7 +250,8 @@ def get_guild_config(guild_id):
         "team_a_voice_channel_id": row[1],
         "team_b_voice_channel_id": row[2],
         "admin_role_id": row[3],
-        "board_message_id": row[4],
+        "owner_role_id": row[4],
+        "board_message_id": row[5],
     }
 
 
@@ -405,6 +457,21 @@ def get_player_stats(guild_id, user_id):
     conn.close()
 
     return stats
+
+
+def mark_player_has_played_backline(user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE players
+        SET has_played_backline = 1
+        WHERE discord_id = ?
+    """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
 
 def get_guild_player_weights(guild_id):
     conn = sqlite3.connect(DB_FILE)

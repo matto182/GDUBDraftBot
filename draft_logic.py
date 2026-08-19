@@ -3,6 +3,7 @@ import random
 from config import (
     FRONTLINE_ROLES,
     MIDLINE_ROLES,
+    BACKLINE_ROLES,
 )
 
 
@@ -96,6 +97,14 @@ def count_assigned(team, role_set):
     return len([1 for _, role in team if role in role_set])
 
 
+def historical_backline_candidates(players, unassigned):
+    return [
+        user_id
+        for user_id in unassigned
+        if players[user_id].get("has_played_backline", False)
+    ]
+
+
 def get_priority_role_for_slot(players, player_id, desired_roles):
     player_roles = players[player_id]["roles"]
 
@@ -141,6 +150,20 @@ def assign_team_roles_for_score(players, team_players):
 
             assigned.append((picked_id, assigned_role))
             unassigned.remove(picked_id)
+            continue
+
+        # If nobody currently volunteered for a required backline slot,
+        # use players who have voluntarily selected backline at some point
+        # before considering leaving the team without that slot.
+        if set(desired_roles).issubset(BACKLINE_ROLES):
+            historic_candidates = historical_backline_candidates(players, unassigned)
+
+            if historic_candidates:
+                picked_id = random.choice(historic_candidates)
+                assigned_role = desired_roles[0]
+
+                assigned.append((picked_id, assigned_role))
+                unassigned.remove(picked_id)
 
     for user_id in unassigned:
         assigned.append((user_id, assign_fallback_role(players, user_id)))
@@ -205,7 +228,15 @@ def score_team(players, team):
     for user_id, assigned_role in team:
         priority = role_priority_index(players, user_id, assigned_role)
 
-        if priority == 0:
+        if (
+            priority == 999
+            and assigned_role in BACKLINE_ROLES
+            and players[user_id].get("has_played_backline", False)
+        ):
+            # Historical backline autofill is valid, but still less desirable
+            # than assigning someone to a role they selected this draft.
+            score += 300
+        elif priority == 0:
             score += 0
         elif priority == 1:
             score += 20
@@ -316,7 +347,13 @@ def generate_random_teams(players, lobby, weights=None):
 
     formation = {
         "front": "Smart balanced",
-        "score": best_score
+        "score": best_score,
+        "team_a_weight": sum(
+            get_hidden_weight(weights, user_id) for user_id, _role in team_a
+        ) if weights else 0,
+        "team_b_weight": sum(
+            get_hidden_weight(weights, user_id) for user_id, _role in team_b
+        ) if weights else 0,
     }
 
     return team_a, team_b, formation
