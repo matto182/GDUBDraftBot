@@ -23,6 +23,20 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Backfill the flag for existing players whose currently saved roles already
+    # include a backline role under either the old or current role names.
+    cursor.execute("""
+        UPDATE players
+        SET has_played_backline = 1
+        WHERE has_played_backline = 0
+        AND (
+            roles LIKE '%Prot Monk%'
+            OR roles LIKE '%Heal Monk%'
+            OR roles LIKE '%Support/Flag (8)%'
+            OR roles LIKE '%8 Support%'
+        )
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS guild_config (
             guild_id INTEGER PRIMARY KEY,
@@ -39,7 +53,6 @@ def init_db():
         cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
     except sqlite3.OperationalError:
         pass
-
 
     try:
         cursor.execute("ALTER TABLE guild_config ADD COLUMN owner_role_id INTEGER")
@@ -148,16 +161,10 @@ def load_players_into(players):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT
-            discord_id,
-            discord_name,
-            ign,
-            roles,
-            has_played_backline
+        SELECT discord_id, discord_name, ign, roles, has_played_backline
         FROM players
     """)
     rows = cursor.fetchall()
-
     conn.close()
 
     players.clear()
@@ -471,7 +478,6 @@ def mark_player_has_played_backline(user_id):
 
     conn.commit()
     conn.close()
-
 
 def get_guild_player_weights(guild_id):
     conn = sqlite3.connect(DB_FILE)

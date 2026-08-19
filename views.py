@@ -375,11 +375,10 @@ class SetupAdminRoleView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Draft Admin role saved: {role.mention}\n\nSetup complete. Posting draft board.",
-            ephemeral=True
+            f"Draft Admin role saved: {role.mention}\n\nNow select the Owner role.",
+            ephemeral=True,
+            view=SetupOwnerRoleView(self.ctx)
         )
-
-        await self.ctx.post_new_draft_board(interaction.guild.id)
 
 class SetupOwnerRoleView(discord.ui.View):
     def __init__(self, ctx):
