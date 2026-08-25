@@ -169,11 +169,145 @@ class KickPlayerSelect(discord.ui.Select):
         await self.ctx.kick_from_draft(interaction, int(self.values[0]))
 
 
+class TimeoutPlayerSelect(discord.ui.Select):
+    def __init__(self, ctx):
+        self.ctx = ctx
+        options = []
+
+        # Show registered players by IGN only.
+        # The Discord ID remains hidden in the option value so the timeout
+        # still applies to the correct Discord account.
+        registered_players = sorted(
+            (
+                (user_id, player)
+                for user_id, player in ctx.players.items()
+                if player.get("ign")
+            ),
+            key=lambda item: item[1]["ign"].lower()
+        )
+
+        for user_id, player in registered_players[:25]:
+            options.append(
+                discord.SelectOption(
+                    label=player["ign"][:100],
+                    value=str(user_id)
+                )
+            )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="No registered players",
+                    value="none"
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose an IGN to timeout",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not self.ctx.is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can use this.",
+                ephemeral=True
+            )
+            return
+
+        if self.values[0] == "none":
+            await interaction.response.send_message(
+                "No registered players are available.",
+                ephemeral=True
+            )
+            return
+
+        user_id = int(self.values[0])
+        player = self.ctx.players.get(user_id)
+
+        if not player or not player.get("ign"):
+            await interaction.response.send_message(
+                "That registered player could not be found.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            f"Choose how long to timeout **{player['ign']}** from draft lobbies:",
+            view=TimeoutDurationView(self.ctx, user_id),
+            ephemeral=True
+        )
+
+class TimeoutPlayerView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=300)
+        self.add_item(TimeoutPlayerSelect(ctx))
+
+
+class TimeoutDurationView(discord.ui.View):
+    def __init__(self, ctx, user_id):
+        super().__init__(timeout=300)
+        self.ctx = ctx
+        self.user_id = user_id
+
+    async def apply_timeout(self, interaction, duration_seconds, duration_label):
+        if not self.ctx.is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can use this.",
+                ephemeral=True
+            )
+            return
+
+        await self.ctx.timeout_from_draft(
+            interaction,
+            self.user_id,
+            duration_seconds,
+            duration_label
+        )
+
+    @discord.ui.button(label="1 Hour", style=discord.ButtonStyle.secondary)
+    async def one_hour(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.apply_timeout(interaction, 60 * 60, "1 hour")
+
+    @discord.ui.button(label="1 Day", style=discord.ButtonStyle.secondary)
+    async def one_day(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.apply_timeout(interaction, 24 * 60 * 60, "1 day")
+
+    @discord.ui.button(label="3 Days", style=discord.ButtonStyle.secondary)
+    async def three_days(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.apply_timeout(interaction, 3 * 24 * 60 * 60, "3 days")
+
+    @discord.ui.button(label="5 Days", style=discord.ButtonStyle.secondary)
+    async def five_days(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.apply_timeout(interaction, 5 * 24 * 60 * 60, "5 days")
+
+    @discord.ui.button(label="Permanent", style=discord.ButtonStyle.danger)
+    async def permanent(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.apply_timeout(interaction, None, "permanently")
+
+
 class AdminDraftView(discord.ui.View):
     def __init__(self, ctx):
         super().__init__(timeout=300)
         self.ctx = ctx
         self.add_item(KickPlayerSelect(ctx))
+
+    @discord.ui.button(label="Timeout Player", style=discord.ButtonStyle.secondary)
+    async def timeout_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.ctx.is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can use this.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "Choose a player to timeout from draft lobbies:",
+            view=TimeoutPlayerView(self.ctx),
+            ephemeral=True
+        )
 
     @discord.ui.button(label="Move Teams", style=discord.ButtonStyle.primary)
     async def move_teams_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -375,39 +509,7 @@ class SetupAdminRoleView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Draft Admin role saved: {role.mention}\n\nNow select the Owner role.",
-            ephemeral=True,
-            view=SetupOwnerRoleView(self.ctx)
-        )
-
-class SetupOwnerRoleView(discord.ui.View):
-    def __init__(self, ctx):
-        super().__init__(timeout=300)
-        self.ctx = ctx
-
-    @discord.ui.select(
-        cls=discord.ui.RoleSelect,
-        placeholder="Step 5: Select Owner role",
-        min_values=1,
-        max_values=1
-    )
-    async def select_owner_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "Only server admins can run setup.",
-                ephemeral=True
-            )
-            return
-
-        role = select.values[0]
-
-        self.ctx.save_guild_config(
-            interaction.guild.id,
-            owner_role_id=role.id
-        )
-
-        await interaction.response.send_message(
-            f"Owner role saved: {role.mention}\n\nSetup complete. Posting draft board.",
+            f"Draft Admin role saved: {role.mention}\n\nSetup complete. Posting draft board.",
             ephemeral=True
         )
 

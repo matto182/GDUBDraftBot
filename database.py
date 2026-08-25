@@ -1,5 +1,5 @@
 import sqlite3
-from config import DB_FILE, normalize_roles
+from config import DB_FILE
 
 
 def init_db():
@@ -11,29 +11,7 @@ def init_db():
             discord_id INTEGER PRIMARY KEY,
             discord_name TEXT NOT NULL,
             ign TEXT NOT NULL,
-            roles TEXT NOT NULL,
-            has_played_backline INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-
-    try:
-        cursor.execute(
-            "ALTER TABLE players ADD COLUMN has_played_backline INTEGER NOT NULL DEFAULT 0"
-        )
-    except sqlite3.OperationalError:
-        pass
-
-    # Backfill the flag for existing players whose currently saved roles already
-    # include a backline role under either the old or current role names.
-    cursor.execute("""
-        UPDATE players
-        SET has_played_backline = 1
-        WHERE has_played_backline = 0
-        AND (
-            roles LIKE '%Prot Monk%'
-            OR roles LIKE '%Heal Monk%'
-            OR roles LIKE '%Support/Flag (8)%'
-            OR roles LIKE '%8 Support%'
+            roles TEXT NOT NULL
         )
     """)
 
@@ -44,18 +22,12 @@ def init_db():
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
             admin_role_id INTEGER,
-            owner_role_id INTEGER,
             board_message_id INTEGER
         )
     """)
 
     try:
         cursor.execute("ALTER TABLE guild_config ADD COLUMN board_message_id INTEGER")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        cursor.execute("ALTER TABLE guild_config ADD COLUMN owner_role_id INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -101,10 +73,12 @@ def init_db():
     """)
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS player_weights (
+        CREATE TABLE IF NOT EXISTS lobby_bans (
             guild_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
-            weight INTEGER NOT NULL DEFAULT 0,
+            banned_by INTEGER,
+            created_at REAL NOT NULL,
+            expires_at REAL,
             PRIMARY KEY (guild_id, user_id)
         )
     """)
@@ -113,43 +87,22 @@ def init_db():
     conn.close()
 
 
-def save_player(discord_id, discord_name, ign, roles, has_played_backline=None):
+def save_player(discord_id, discord_name, ign, roles):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    normalized_roles = normalize_roles(roles)
-
-    if has_played_backline is None:
-        cursor.execute(
-            "SELECT has_played_backline FROM players WHERE discord_id = ?",
-            (discord_id,)
-        )
-        row = cursor.fetchone()
-        has_played_backline = row[0] if row else 0
-
     cursor.execute("""
-        INSERT INTO players (
-            discord_id,
-            discord_name,
-            ign,
-            roles,
-            has_played_backline
-        )
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO players (discord_id, discord_name, ign, roles)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET
             discord_name = excluded.discord_name,
             ign = excluded.ign,
-            roles = excluded.roles,
-            has_played_backline = CASE
-                WHEN players.has_played_backline = 1 THEN 1
-                ELSE excluded.has_played_backline
-            END
+            roles = excluded.roles
     """, (
         discord_id,
         discord_name,
         ign,
-        ",".join(normalized_roles),
-        1 if has_played_backline else 0
+        ",".join(roles)
     ))
 
     conn.commit()
@@ -160,21 +113,18 @@ def load_players_into(players):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT discord_id, discord_name, ign, roles, has_played_backline
-        FROM players
-    """)
+    cursor.execute("SELECT discord_id, discord_name, ign, roles FROM players")
     rows = cursor.fetchall()
+
     conn.close()
 
     players.clear()
 
-    for discord_id, discord_name, ign, roles_text, has_played_backline in rows:
+    for discord_id, discord_name, ign, roles_text in rows:
         players[discord_id] = {
             "discord_name": discord_name,
             "ign": ign,
-            "roles": normalize_roles(roles_text),
-            "has_played_backline": bool(has_played_backline),
+            "roles": roles_text.split(",") if roles_text else [],
         }
 
 
@@ -184,7 +134,6 @@ def save_guild_config(
     team_a_voice_channel_id=None,
     team_b_voice_channel_id=None,
     admin_role_id=None,
-    owner_role_id=None,
 ):
     current = get_guild_config(guild_id) or {}
 
@@ -192,7 +141,6 @@ def save_guild_config(
     team_a_voice_channel_id = team_a_voice_channel_id or current.get("team_a_voice_channel_id")
     team_b_voice_channel_id = team_b_voice_channel_id or current.get("team_b_voice_channel_id")
     admin_role_id = admin_role_id or current.get("admin_role_id")
-    owner_role_id = owner_role_id or current.get("owner_role_id")
     board_message_id = current.get("board_message_id")
 
     conn = sqlite3.connect(DB_FILE)
@@ -205,16 +153,14 @@ def save_guild_config(
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
-            owner_role_id,
             board_message_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(guild_id) DO UPDATE SET
             draft_channel_id = excluded.draft_channel_id,
             team_a_voice_channel_id = excluded.team_a_voice_channel_id,
             team_b_voice_channel_id = excluded.team_b_voice_channel_id,
             admin_role_id = excluded.admin_role_id,
-            owner_role_id = excluded.owner_role_id,
             board_message_id = excluded.board_message_id
     """, (
         guild_id,
@@ -222,7 +168,6 @@ def save_guild_config(
         team_a_voice_channel_id,
         team_b_voice_channel_id,
         admin_role_id,
-        owner_role_id,
         board_message_id,
     ))
 
@@ -240,7 +185,6 @@ def get_guild_config(guild_id):
             team_a_voice_channel_id,
             team_b_voice_channel_id,
             admin_role_id,
-            owner_role_id,
             board_message_id
         FROM guild_config
         WHERE guild_id = ?
@@ -257,8 +201,7 @@ def get_guild_config(guild_id):
         "team_a_voice_channel_id": row[1],
         "team_b_voice_channel_id": row[2],
         "admin_role_id": row[3],
-        "owner_role_id": row[4],
-        "board_message_id": row[5],
+        "board_message_id": row[4],
     }
 
 
@@ -465,68 +408,143 @@ def get_player_stats(guild_id, user_id):
 
     return stats
 
+def set_lobby_ban(guild_id, user_id, banned_by, duration_seconds=None):
+    now = time.time()
+    expires_at = None if duration_seconds is None else now + duration_seconds
 
-def mark_player_has_played_backline(user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
     cursor.execute("""
-        UPDATE players
-        SET has_played_backline = 1
-        WHERE discord_id = ?
-    """, (user_id,))
+        INSERT INTO lobby_bans (
+            guild_id,
+            user_id,
+            banned_by,
+            created_at,
+            expires_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, user_id) DO UPDATE SET
+            banned_by = excluded.banned_by,
+            created_at = excluded.created_at,
+            expires_at = excluded.expires_at
+    """, (
+        guild_id,
+        user_id,
+        banned_by,
+        now,
+        expires_at
+    ))
 
     conn.commit()
     conn.close()
 
-def get_guild_player_weights(guild_id):
+    return expires_at
+
+
+def remove_lobby_ban(guild_id, user_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT user_id, weight
-        FROM player_weights
+        DELETE FROM lobby_bans
         WHERE guild_id = ?
+        AND user_id = ?
+    """, (guild_id, user_id))
+
+    removed = cursor.rowcount > 0
+
+    conn.commit()
+    conn.close()
+
+    return removed
+
+
+def get_lobby_ban(guild_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT banned_by, created_at, expires_at
+        FROM lobby_bans
+        WHERE guild_id = ?
+        AND user_id = ?
+    """, (guild_id, user_id))
+
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    banned_by, created_at, expires_at = row
+
+    # Expired temporary bans clean themselves up the next time they are checked.
+    if expires_at is not None and expires_at <= time.time():
+        cursor.execute("""
+            DELETE FROM lobby_bans
+            WHERE guild_id = ?
+            AND user_id = ?
+        """, (guild_id, user_id))
+        conn.commit()
+        conn.close()
+        return None
+
+    conn.close()
+
+    return {
+        "guild_id": guild_id,
+        "user_id": user_id,
+        "banned_by": banned_by,
+        "created_at": created_at,
+        "expires_at": expires_at,
+    }
+
+
+def cleanup_expired_lobby_bans(guild_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM lobby_bans
+        WHERE guild_id = ?
+        AND expires_at IS NOT NULL
+        AND expires_at <= ?
+    """, (guild_id, time.time()))
+
+    removed = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return removed
+
+
+def get_active_lobby_bans(guild_id):
+    cleanup_expired_lobby_bans(guild_id)
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id, banned_by, created_at, expires_at
+        FROM lobby_bans
+        WHERE guild_id = ?
+        ORDER BY
+            CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END,
+            expires_at ASC,
+            created_at ASC
     """, (guild_id,))
 
     rows = cursor.fetchall()
     conn.close()
 
-    return {user_id: weight for user_id, weight in rows}
-
-
-def get_player_weight(guild_id, user_id):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT weight
-        FROM player_weights
-        WHERE guild_id = ? AND user_id = ?
-    """, (guild_id, user_id))
-
-    row = cursor.fetchone()
-    conn.close()
-
-    return row[0] if row else 0
-
-
-def set_player_weight(guild_id, user_id, weight):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    if weight == 0:
-        cursor.execute(
-            "DELETE FROM player_weights WHERE guild_id = ? AND user_id = ?",
-            (guild_id, user_id)
-        )
-    else:
-        cursor.execute("""
-            INSERT INTO player_weights (guild_id, user_id, weight)
-            VALUES (?, ?, ?)
-            ON CONFLICT(guild_id, user_id) DO UPDATE SET
-                weight = excluded.weight
-        """, (guild_id, user_id, weight))
-
-    conn.commit()
-    conn.close()
+    return [
+        {
+            "user_id": user_id,
+            "banned_by": banned_by,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        }
+        for user_id, banned_by, created_at, expires_at in rows
+    ]
