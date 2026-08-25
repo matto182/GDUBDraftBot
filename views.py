@@ -170,22 +170,12 @@ class KickPlayerSelect(discord.ui.Select):
 
 
 class TimeoutPlayerSelect(discord.ui.Select):
-    def __init__(self, ctx):
+    def __init__(self, ctx, registered_players):
         self.ctx = ctx
         options = []
 
-        # Show registered players by IGN only.
-        # The Discord ID remains hidden in the option value so the timeout
-        # still applies to the correct Discord account.
-        registered_players = sorted(
-            (
-                (user_id, player)
-                for user_id, player in ctx.players.items()
-                if player.get("ign")
-            ),
-            key=lambda item: item[1]["ign"].lower()
-        )
-
+        # registered_players has already been filtered to members of the
+        # Discord server where the Admin Panel was opened.
         for user_id, player in registered_players[:25]:
             options.append(
                 discord.SelectOption(
@@ -197,7 +187,7 @@ class TimeoutPlayerSelect(discord.ui.Select):
         if not options:
             options.append(
                 discord.SelectOption(
-                    label="No registered players",
+                    label="No registered players in this server",
                     value="none"
                 )
             )
@@ -219,7 +209,7 @@ class TimeoutPlayerSelect(discord.ui.Select):
 
         if self.values[0] == "none":
             await interaction.response.send_message(
-                "No registered players are available.",
+                "No registered players from this server are available.",
                 ephemeral=True
             )
             return
@@ -240,10 +230,11 @@ class TimeoutPlayerSelect(discord.ui.Select):
             ephemeral=True
         )
 
+
 class TimeoutPlayerView(discord.ui.View):
-    def __init__(self, ctx):
+    def __init__(self, ctx, registered_players):
         super().__init__(timeout=300)
-        self.add_item(TimeoutPlayerSelect(ctx))
+        self.add_item(TimeoutPlayerSelect(ctx, registered_players))
 
 
 class TimeoutDurationView(discord.ui.View):
@@ -303,9 +294,46 @@ class AdminDraftView(discord.ui.View):
             )
             return
 
-        await interaction.response.send_message(
+        # Membership checks can require Discord API calls, so acknowledge the
+        # interaction immediately before resolving eligible players.
+        await interaction.response.defer(ephemeral=True)
+
+        registered_players = sorted(
+            (
+                (user_id, player)
+                for user_id, player in self.ctx.players.items()
+                if player.get("ign")
+            ),
+            key=lambda item: item[1]["ign"].lower()
+        )
+
+        guild_players = []
+
+        for user_id, player in registered_players:
+            # Use the cache first when possible.
+            member = interaction.guild.get_member(user_id)
+
+            if member is None:
+                # fetch_member verifies one specific Discord ID against this
+                # guild without displaying Discord identity in the picker.
+                try:
+                    member = await interaction.guild.fetch_member(user_id)
+                except discord.NotFound:
+                    continue
+                except (discord.Forbidden, discord.HTTPException):
+                    # If membership cannot be verified for this guild,
+                    # do not expose the player in this server's picker.
+                    continue
+
+            guild_players.append((user_id, player))
+
+            # Discord string selects support at most 25 options.
+            if len(guild_players) >= 25:
+                break
+
+        await interaction.followup.send(
             "Choose a player to timeout from draft lobbies:",
-            view=TimeoutPlayerView(self.ctx),
+            view=TimeoutPlayerView(self.ctx, guild_players),
             ephemeral=True
         )
 
