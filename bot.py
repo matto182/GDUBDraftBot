@@ -812,7 +812,10 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
      
 class MyBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.members = True
+
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     

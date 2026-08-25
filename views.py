@@ -294,44 +294,22 @@ class AdminDraftView(discord.ui.View):
             )
             return
 
-        # Membership checks can require Discord API calls, so acknowledge the
-        # interaction immediately before resolving eligible players.
-        await interaction.response.defer(ephemeral=True)
+        guild_member_ids = {
+            member.id
+            for member in interaction.guild.members
+        }
 
-        registered_players = sorted(
+        guild_players = sorted(
             (
                 (user_id, player)
                 for user_id, player in self.ctx.players.items()
-                if player.get("ign")
+                if user_id in guild_member_ids
+                and player.get("ign")
             ),
             key=lambda item: item[1]["ign"].lower()
-        )
+        )[:25]
 
-        guild_players = []
-
-        for user_id, player in registered_players:
-            # Use the cache first when possible.
-            member = interaction.guild.get_member(user_id)
-
-            if member is None:
-                # fetch_member verifies one specific Discord ID against this
-                # guild without displaying Discord identity in the picker.
-                try:
-                    member = await interaction.guild.fetch_member(user_id)
-                except discord.NotFound:
-                    continue
-                except (discord.Forbidden, discord.HTTPException):
-                    # If membership cannot be verified for this guild,
-                    # do not expose the player in this server's picker.
-                    continue
-
-            guild_players.append((user_id, player))
-
-            # Discord string selects support at most 25 options.
-            if len(guild_players) >= 25:
-                break
-
-        await interaction.followup.send(
+        await interaction.response.send_message(
             "Choose a player to timeout from draft lobbies:",
             view=TimeoutPlayerView(self.ctx, guild_players),
             ephemeral=True
@@ -370,7 +348,6 @@ class AdminDraftView(discord.ui.View):
 
         await self.ctx.reset_draft_only(interaction, silent=True)
         await self.ctx.post_new_draft_board(interaction.guild.id)
-
 
 class CaptainPickSelect(discord.ui.Select):
     def __init__(self, ctx):
