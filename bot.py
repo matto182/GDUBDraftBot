@@ -50,6 +50,7 @@ from views import (
     AdminDraftView,
     CaptainPickView,
     SetupWizardView,
+    TimeoutDurationView,
 )
 
 
@@ -841,6 +842,122 @@ async def wipelobby(interaction: discord.Interaction):
         return
 
     await wipe_lobby(interaction)
+async def timeout_player_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+):
+    if interaction.guild is None:
+        return []
+
+    current_lower = current.casefold().strip()
+    state = get_state(interaction.guild.id)
+
+    # Use the cached member list, plus anyone already present in this guild's
+    # lobby/waiting room as a fallback if the member cache is incomplete.
+    eligible_user_ids = {
+        member.id
+        for member in interaction.guild.members
+    }
+    eligible_user_ids.update(state.lobby)
+    eligible_user_ids.update(state.waiting_room)
+
+    matches = []
+
+    for user_id, data in players.items():
+        ign = data.get("ign")
+
+        if not ign or user_id not in eligible_user_ids:
+            continue
+
+        if current_lower and current_lower not in ign.casefold():
+            continue
+
+        matches.append((ign, user_id))
+
+    matches.sort(key=lambda item: item[0].casefold())
+
+    return [
+        app_commands.Choice(
+            name=ign[:100],
+            value=str(user_id)
+        )
+        for ign, user_id in matches[:25]
+    ]
+
+
+@bot.tree.command(name="timeout", description="Timeout a player from draft lobbies.")
+@app_commands.describe(player="Player IGN")
+@app_commands.autocomplete(player=timeout_player_autocomplete)
+async def timeout(interaction: discord.Interaction, player: str):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can timeout players.",
+            ephemeral=True
+        )
+        return
+
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            ephemeral=True
+        )
+        return
+
+    state = get_state(interaction.guild.id)
+
+    eligible_user_ids = {
+        member.id
+        for member in interaction.guild.members
+    }
+    eligible_user_ids.update(state.lobby)
+    eligible_user_ids.update(state.waiting_room)
+
+    user_id = None
+
+    try:
+        candidate_id = int(player)
+
+        if candidate_id in eligible_user_ids and candidate_id in players:
+            user_id = candidate_id
+
+    except ValueError:
+        exact_matches = [
+            candidate_id
+            for candidate_id, data in players.items()
+            if candidate_id in eligible_user_ids
+            and data.get("ign", "").casefold() == player.casefold()
+        ]
+
+        if len(exact_matches) == 1:
+            user_id = exact_matches[0]
+
+        elif len(exact_matches) > 1:
+            await interaction.response.send_message(
+                f"More than one player in this server uses the IGN **{player}**. "
+                "Choose one from autocomplete.",
+                ephemeral=True
+            )
+            return
+
+    if user_id is None:
+        await interaction.response.send_message(
+            f"No registered player in this server found with IGN **{player}**.",
+            ephemeral=True
+        )
+        return
+
+    ign = players[user_id]["ign"]
+
+    await interaction.response.send_message(
+        f"Choose how long to timeout **{ign}** from draft lobbies:",
+        view=TimeoutDurationView(
+            get_view_context(interaction.guild.id),
+            user_id
+        ),
+        ephemeral=True
+    )
+
+
 async def untimeout_player_autocomplete(
     interaction: discord.Interaction,
     current: str
