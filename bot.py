@@ -211,7 +211,6 @@ def build_draft_board_embed(guild_id):
         f"## Current Needs\n"
         f"{needs_text}\n\n"
         f"## Waiting Room — {len(waiting_room)}\n"
-        f"{waiting_text}\n\n"
         f"## Votes\n"
         f"Captain Mode: **{captain_votes}**\n"
         f"Random Draft: **{random_votes}**\n\n"
@@ -461,7 +460,12 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    if state.captain_draft or state.draft_result or len(state.lobby) >= 16:
+    # Preserve FIFO: existing waiting-room players always get first claim
+    # on any open lobby slots before a brand-new signup can enter.
+    if not state.captain_draft and not state.draft_result and len(state.lobby) < 16:
+        fill_lobby_from_waiting_room(guild_id)
+
+    if state.captain_draft or state.draft_result or len(state.lobby) >= 16 or state.waiting_room:
         state.waiting_room.append(user_id)
     else:
         state.lobby.append(user_id)
@@ -500,6 +504,11 @@ async def drop_player(interaction: discord.Interaction, silent=False):
     if not removed:
         await interaction.response.send_message("You are not signed up.", ephemeral=True)
         return False
+
+    # If the draft is not active, immediately give the newly opened lobby
+    # slot to the oldest waiting-room player.
+    if not state.captain_draft and not state.draft_result:
+        fill_lobby_from_waiting_room(guild_id)
 
     save_lobby_state(guild_id)
 
@@ -1121,6 +1130,431 @@ async def timeouts(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+
+
+# ---------------------------------------------------------------------------
+# Admin player / waiting-room management
+# Normal /signup behavior remains FIFO. These are explicit admin overrides.
+# Lobby ordering is intentionally not exposed because it has no draft effect.
+# ---------------------------------------------------------------------------
+
+def _admin_manage_eligible_ids(interaction: discord.Interaction):
+    state = get_state(interaction.guild.id)
+
+    eligible_ids = {
+        member.id
+        for member in interaction.guild.members
+    }
+
+    eligible_ids.update(state.lobby)
+    eligible_ids.update(state.waiting_room)
+
+    return eligible_ids
+
+
+def _find_admin_player(interaction: discord.Interaction, value: str):
+    eligible_ids = _admin_manage_eligible_ids(interaction)
+
+    try:
+        user_id = int(value)
+        if user_id in eligible_ids and user_id in players:
+            return user_id
+    except ValueError:
+        pass
+
+    matches = [
+        user_id
+        for user_id, data in players.items()
+        if user_id in eligible_ids
+        and data.get("ign", "").casefold() == value.casefold()
+    ]
+
+    return matches[0] if len(matches) == 1 else None
+
+
+async def admin_registered_player_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild is None:
+        return []
+
+    state = get_state(interaction.guild.id)
+    eligible_ids = _admin_manage_eligible_ids(interaction)
+    current_cf = current.casefold().strip()
+    matches = []
+
+    for user_id, data in players.items():
+        ign = data.get("ign")
+        if not ign or user_id not in eligible_ids:
+            continue
+        if user_id in state.lobby or user_id in state.waiting_room:
+            continue
+        if current_cf and current_cf not in ign.casefold():
+            continue
+        matches.append((ign, user_id))
+
+    matches.sort(key=lambda item: item[0].casefold())
+
+    return [
+        app_commands.Choice(name=ign[:100], value=str(user_id))
+        for ign, user_id in matches[:25]
+    ]
+
+
+async def admin_signed_player_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild is None:
+        return []
+
+    state = get_state(interaction.guild.id)
+    current_cf = current.casefold().strip()
+    matches = []
+
+    for user_id in list(state.lobby) + list(state.waiting_room):
+        data = players.get(user_id)
+        if not data or not data.get("ign"):
+            continue
+
+        ign = data["ign"]
+        if current_cf and current_cf not in ign.casefold():
+            continue
+
+        matches.append((ign, user_id))
+
+    matches.sort(key=lambda item: item[0].casefold())
+
+    return [
+        app_commands.Choice(name=ign[:100], value=str(user_id))
+        for ign, user_id in matches[:25]
+    ]
+
+
+async def admin_waiting_player_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild is None:
+        return []
+
+    state = get_state(interaction.guild.id)
+    current_cf = current.casefold().strip()
+    matches = []
+
+    for user_id in state.waiting_room:
+        data = players.get(user_id)
+        if not data or not data.get("ign"):
+            continue
+
+        ign = data["ign"]
+        if current_cf and current_cf not in ign.casefold():
+            continue
+
+        matches.append((ign, user_id))
+
+    return [
+        app_commands.Choice(name=ign[:100], value=str(user_id))
+        for ign, user_id in matches[:25]
+    ]
+
+
+async def admin_lobby_player_autocomplete(interaction: discord.Interaction, current: str):
+    if interaction.guild is None:
+        return []
+
+    state = get_state(interaction.guild.id)
+    current_cf = current.casefold().strip()
+    matches = []
+
+    for user_id in state.lobby:
+        data = players.get(user_id)
+        if not data or not data.get("ign"):
+            continue
+
+        ign = data["ign"]
+        if current_cf and current_cf not in ign.casefold():
+            continue
+
+        matches.append((ign, user_id))
+
+    return [
+        app_commands.Choice(name=ign[:100], value=str(user_id))
+        for ign, user_id in matches[:25]
+    ]
+
+
+@bot.tree.command(name="addplayer", description="Manually add a registered player to the draft.")
+@app_commands.describe(player="Player IGN", location="Where to add the player")
+@app_commands.choices(location=[
+    app_commands.Choice(name="Lobby", value="lobby"),
+    app_commands.Choice(name="Waiting Room", value="waiting"),
+])
+@app_commands.autocomplete(player=admin_registered_player_autocomplete)
+async def addplayer(
+    interaction: discord.Interaction,
+    player: str,
+    location: app_commands.Choice[str],
+):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can manage players.",
+            ephemeral=True
+        )
+        return
+
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+    user_id = _find_admin_player(interaction, player)
+
+    if user_id is None:
+        await interaction.response.send_message(
+            f"No registered player in this server found for **{player}**.",
+            ephemeral=True
+        )
+        return
+
+    if user_id in state.lobby or user_id in state.waiting_room:
+        await interaction.response.send_message(
+            f"**{players[user_id]['ign']}** is already signed up.",
+            ephemeral=True
+        )
+        return
+
+    if location.value == "lobby":
+        if state.captain_draft:
+            await interaction.response.send_message(
+                "You cannot add someone to the lobby during an active Captain Draft.",
+                ephemeral=True
+            )
+            return
+
+        if len(state.lobby) >= 16:
+            await interaction.response.send_message(
+                "The lobby is full. Add them to the waiting room or use `/swapplayers`.",
+                ephemeral=True
+            )
+            return
+
+        state.lobby.append(user_id)
+        destination = "lobby"
+    else:
+        state.waiting_room.append(user_id)
+        destination = "waiting room"
+
+    state.last_signup_time = time.time()
+    save_lobby_state(guild_id)
+
+    await interaction.response.send_message(
+        f"Added **{players[user_id]['ign']}** to the **{destination}**.",
+        ephemeral=True
+    )
+
+    await post_new_draft_board(guild_id)
+
+
+@bot.tree.command(name="moveplayer", description="Move a signed player between lobby and waiting room.")
+@app_commands.describe(player="Player IGN", destination="Where to move the player")
+@app_commands.choices(destination=[
+    app_commands.Choice(name="Lobby", value="lobby"),
+    app_commands.Choice(name="Waiting Room", value="waiting"),
+])
+@app_commands.autocomplete(player=admin_signed_player_autocomplete)
+async def moveplayer(
+    interaction: discord.Interaction,
+    player: str,
+    destination: app_commands.Choice[str],
+):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can manage players.",
+            ephemeral=True
+        )
+        return
+
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+    user_id = _find_admin_player(interaction, player)
+
+    if user_id is None or (
+        user_id not in state.lobby
+        and user_id not in state.waiting_room
+    ):
+        await interaction.response.send_message(
+            f"**{player}** is not currently signed up.",
+            ephemeral=True
+        )
+        return
+
+    ign = players[user_id]["ign"]
+
+    if destination.value == "waiting":
+        if user_id in state.waiting_room:
+            await interaction.response.send_message(
+                f"**{ign}** is already in the waiting room.",
+                ephemeral=True
+            )
+            return
+
+        if state.captain_draft:
+            await interaction.response.send_message(
+                "You cannot move an active Captain Draft player out of the lobby.",
+                ephemeral=True
+            )
+            return
+
+        state.lobby.remove(user_id)
+        state.waiting_room.append(user_id)
+        state.votes.pop(user_id, None)
+
+        if user_id in state.captain_volunteers:
+            state.captain_volunteers.remove(user_id)
+
+        destination_label = "waiting room"
+    else:
+        if user_id in state.lobby:
+            await interaction.response.send_message(
+                f"**{ign}** is already in the lobby.",
+                ephemeral=True
+            )
+            return
+
+        if state.captain_draft:
+            await interaction.response.send_message(
+                "You cannot add a player to the lobby during an active Captain Draft.",
+                ephemeral=True
+            )
+            return
+
+        if len(state.lobby) >= 16:
+            await interaction.response.send_message(
+                "The lobby is full. Use `/swapplayers` to exchange them with a lobby player.",
+                ephemeral=True
+            )
+            return
+
+        state.waiting_room.remove(user_id)
+        state.lobby.append(user_id)
+        destination_label = "lobby"
+
+    save_lobby_state(guild_id)
+
+    await interaction.response.send_message(
+        f"Moved **{ign}** to the **{destination_label}**.",
+        ephemeral=True
+    )
+
+    await post_new_draft_board(guild_id)
+
+
+@bot.tree.command(name="queue", description="Move a waiting-room player to a specific queue position.")
+@app_commands.describe(player="Waiting-room player IGN", position="New queue position, starting at 1")
+@app_commands.autocomplete(player=admin_waiting_player_autocomplete)
+async def queue(
+    interaction: discord.Interaction,
+    player: str,
+    position: int,
+):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can reorder the waiting room.",
+            ephemeral=True
+        )
+        return
+
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+    user_id = _find_admin_player(interaction, player)
+
+    if user_id is None or user_id not in state.waiting_room:
+        await interaction.response.send_message(
+            f"**{player}** is not currently in the waiting room.",
+            ephemeral=True
+        )
+        return
+
+    if position < 1 or position > len(state.waiting_room):
+        await interaction.response.send_message(
+            f"Position must be between **1** and **{len(state.waiting_room)}**.",
+            ephemeral=True
+        )
+        return
+
+    state.waiting_room.remove(user_id)
+    state.waiting_room.insert(position - 1, user_id)
+
+    save_lobby_state(guild_id)
+
+    await interaction.response.send_message(
+        f"Moved **{players[user_id]['ign']}** to waiting-room position **#{position}**.",
+        ephemeral=True
+    )
+
+    await post_new_draft_board(guild_id)
+
+
+@bot.tree.command(name="swapplayers", description="Swap one lobby player with one waiting-room player.")
+@app_commands.describe(
+    lobby_player="Player currently in the lobby",
+    waiting_player="Player currently in the waiting room"
+)
+@app_commands.autocomplete(
+    lobby_player=admin_lobby_player_autocomplete,
+    waiting_player=admin_waiting_player_autocomplete
+)
+async def swapplayers(
+    interaction: discord.Interaction,
+    lobby_player: str,
+    waiting_player: str,
+):
+    if not is_draft_admin(interaction):
+        await interaction.response.send_message(
+            "Only draft admins can manage players.",
+            ephemeral=True
+        )
+        return
+
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
+    if state.captain_draft:
+        await interaction.response.send_message(
+            "You cannot swap active Captain Draft players.",
+            ephemeral=True
+        )
+        return
+
+    lobby_id = _find_admin_player(interaction, lobby_player)
+    waiting_id = _find_admin_player(interaction, waiting_player)
+
+    if lobby_id is None or lobby_id not in state.lobby:
+        await interaction.response.send_message(
+            f"**{lobby_player}** is not currently in the lobby.",
+            ephemeral=True
+        )
+        return
+
+    if waiting_id is None or waiting_id not in state.waiting_room:
+        await interaction.response.send_message(
+            f"**{waiting_player}** is not currently in the waiting room.",
+            ephemeral=True
+        )
+        return
+
+    waiting_index = state.waiting_room.index(waiting_id)
+
+    state.lobby.remove(lobby_id)
+    state.waiting_room.pop(waiting_index)
+    state.lobby.append(waiting_id)
+
+    # Demoted lobby player takes the promoted waiter's exact queue spot.
+    state.waiting_room.insert(waiting_index, lobby_id)
+
+    state.votes.pop(lobby_id, None)
+
+    if lobby_id in state.captain_volunteers:
+        state.captain_volunteers.remove(lobby_id)
+
+    save_lobby_state(guild_id)
+
+    await interaction.response.send_message(
+        f"Swapped **{players[lobby_id]['ign']}** with **{players[waiting_id]['ign']}**.",
+        ephemeral=True
+    )
+
+    await post_new_draft_board(guild_id)
 
 @bot.tree.command(name="setup", description="Run the draft bot setup wizard.")
 async def setup(interaction: discord.Interaction):
