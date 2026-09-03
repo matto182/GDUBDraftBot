@@ -211,6 +211,7 @@ def build_draft_board_embed(guild_id):
         f"## Current Needs\n"
         f"{needs_text}\n\n"
         f"## Waiting Room — {len(waiting_room)}\n"
+        f"{waiting_text}\n\n"
         f"## Votes\n"
         f"Captain Mode: **{captain_votes}**\n"
         f"Random Draft: **{random_votes}**\n\n"

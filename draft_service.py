@@ -187,6 +187,7 @@ def build_draft_board_embed(guild_id):
         f"## Current Needs\n"
         f"{needs_text}\n\n"
         f"## Waiting Room — {len(waiting_room)}\n"
+        f"{waiting_text}\n\n"
         f"## Votes\n"
         f"Captain Mode: **{captain_votes}**\n"
         f"Random Draft: **{random_votes}**\n\n"
@@ -347,7 +348,12 @@ async def signup_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("You are already in the waiting room.", ephemeral=True)
         return False
 
-    if state.captain_draft or state.draft_result or len(state.lobby) >= 16:
+    # Preserve FIFO: existing waiting-room players always get first claim
+    # on any open lobby slots before a brand-new signup can enter.
+    if not state.captain_draft and not state.draft_result and len(state.lobby) < 16:
+        fill_lobby_from_waiting_room(guild_id)
+
+    if state.captain_draft or state.draft_result or len(state.lobby) >= 16 or state.waiting_room:
         state.waiting_room.append(user_id)
     else:
         state.lobby.append(user_id)
@@ -386,6 +392,11 @@ async def drop_player(interaction: discord.Interaction, silent=False):
     if not removed:
         await interaction.response.send_message("You are not signed up.", ephemeral=True)
         return False
+
+    # If the draft is not active, immediately give the newly opened lobby
+    # slot to the oldest waiting-room player.
+    if not state.captain_draft and not state.draft_result:
+        fill_lobby_from_waiting_room(guild_id)
 
     save_lobby_state(guild_id)
 
