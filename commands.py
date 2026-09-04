@@ -1,4 +1,5 @@
 from admin_commands import register_admin_commands
+from admin_panel_commands import register_admin_panel_commands
 from lobby_commands import register_lobby_commands
 from moderation_commands import register_moderation_commands
 from player_commands import register_player_commands
@@ -12,6 +13,7 @@ def register_commands(bot):
     register_player_commands(bot)
     register_lobby_commands(bot)
     register_admin_commands(bot)
+    register_admin_panel_commands(bot)
     register_moderation_commands(bot)
     register_player_management_commands(bot)
     register_player_inspector_commands(bot)

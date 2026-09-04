@@ -5,7 +5,7 @@ import discord
 from config import BACKLINE_ROLES
 from database import save_player
 from state import get_state
-from views import AdminDraftView
+from admin_panel_views import AdminPanelView, build_admin_panel_embed
 
 import draft_service as svc
 
@@ -108,7 +108,7 @@ def register_admin_commands(bot):
             return
 
         await interaction.response.send_message(
-            "Admin draft controls:",
-            view=AdminDraftView(svc.get_view_context(interaction.guild.id)),
+            embed=build_admin_panel_embed(interaction.guild.id),
+            view=AdminPanelView(interaction.guild.id),
             ephemeral=True
         )

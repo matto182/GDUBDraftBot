@@ -1,5 +1,3 @@
-import time
-
 import discord
 from discord import app_commands
 
@@ -13,6 +11,14 @@ from admin_player_helpers import (
 from state import get_state
 
 import draft_service as svc
+import player_management_service as player_management
+
+
+async def _send_action_result(interaction, success, message):
+    await interaction.response.send_message(message, ephemeral=True)
+
+    if success:
+        await svc.post_new_draft_board(interaction.guild.id)
 
 
 def register_player_management_commands(bot):
@@ -35,8 +41,6 @@ def register_player_management_commands(bot):
             )
             return
 
-        guild_id = interaction.guild.id
-        state = get_state(guild_id)
         user_id = _find_admin_player(interaction, player)
 
         if user_id is None:
@@ -46,43 +50,12 @@ def register_player_management_commands(bot):
             )
             return
 
-        if user_id in state.lobby or user_id in state.waiting_room:
-            await interaction.response.send_message(
-                f"**{svc.players[user_id]['ign']}** is already signed up.",
-                ephemeral=True,
-            )
-            return
-
-        if location.value == "lobby":
-            if state.captain_draft:
-                await interaction.response.send_message(
-                    "You cannot add someone to the lobby during an active Captain Draft.",
-                    ephemeral=True,
-                )
-                return
-
-            if len(state.lobby) >= 16:
-                await interaction.response.send_message(
-                    "The lobby is full. Add them to the waiting room or use `/swapplayers`.",
-                    ephemeral=True,
-                )
-                return
-
-            state.lobby.append(user_id)
-            destination = "lobby"
-        else:
-            state.waiting_room.append(user_id)
-            destination = "waiting room"
-
-        state.last_signup_time = time.time()
-        svc.save_lobby_state(guild_id)
-
-        await interaction.response.send_message(
-            f"Added **{svc.players[user_id]['ign']}** to the **{destination}**.",
-            ephemeral=True,
+        success, message = player_management.add_player(
+            interaction.guild.id,
+            user_id,
+            location.value,
         )
-
-        await svc.post_new_draft_board(guild_id)
+        await _send_action_result(interaction, success, message)
 
     @bot.tree.command(name="moveplayer", description="Move a signed player between lobby and waiting room.")
     @app_commands.describe(player="Player IGN", destination="Where to move the player")
@@ -103,79 +76,21 @@ def register_player_management_commands(bot):
             )
             return
 
-        guild_id = interaction.guild.id
-        state = get_state(guild_id)
         user_id = _find_admin_player(interaction, player)
 
-        if user_id is None or (
-            user_id not in state.lobby
-            and user_id not in state.waiting_room
-        ):
+        if user_id is None:
             await interaction.response.send_message(
                 f"**{player}** is not currently signed up.",
                 ephemeral=True,
             )
             return
 
-        ign = svc.players[user_id]["ign"]
-
-        if destination.value == "waiting":
-            if user_id in state.waiting_room:
-                await interaction.response.send_message(
-                    f"**{ign}** is already in the waiting room.",
-                    ephemeral=True,
-                )
-                return
-
-            if state.captain_draft:
-                await interaction.response.send_message(
-                    "You cannot move an active Captain Draft player out of the lobby.",
-                    ephemeral=True,
-                )
-                return
-
-            state.lobby.remove(user_id)
-            state.waiting_room.append(user_id)
-            state.votes.pop(user_id, None)
-
-            if user_id in state.captain_volunteers:
-                state.captain_volunteers.remove(user_id)
-
-            destination_label = "waiting room"
-        else:
-            if user_id in state.lobby:
-                await interaction.response.send_message(
-                    f"**{ign}** is already in the lobby.",
-                    ephemeral=True,
-                )
-                return
-
-            if state.captain_draft:
-                await interaction.response.send_message(
-                    "You cannot add a player to the lobby during an active Captain Draft.",
-                    ephemeral=True,
-                )
-                return
-
-            if len(state.lobby) >= 16:
-                await interaction.response.send_message(
-                    "The lobby is full. Use `/swapplayers` to exchange them with a lobby player.",
-                    ephemeral=True,
-                )
-                return
-
-            state.waiting_room.remove(user_id)
-            state.lobby.append(user_id)
-            destination_label = "lobby"
-
-        svc.save_lobby_state(guild_id)
-
-        await interaction.response.send_message(
-            f"Moved **{ign}** to the **{destination_label}**.",
-            ephemeral=True,
+        success, message = player_management.move_player(
+            interaction.guild.id,
+            user_id,
+            destination.value,
         )
-
-        await svc.post_new_draft_board(guild_id)
+        await _send_action_result(interaction, success, message)
 
     @bot.tree.command(name="queue", description="Move a waiting-room player to a specific queue position.")
     @app_commands.describe(player="Waiting-room player IGN", position="New queue position, starting at 1")
@@ -192,35 +107,21 @@ def register_player_management_commands(bot):
             )
             return
 
-        guild_id = interaction.guild.id
-        state = get_state(guild_id)
         user_id = _find_admin_player(interaction, player)
 
-        if user_id is None or user_id not in state.waiting_room:
+        if user_id is None:
             await interaction.response.send_message(
                 f"**{player}** is not currently in the waiting room.",
                 ephemeral=True,
             )
             return
 
-        if position < 1 or position > len(state.waiting_room):
-            await interaction.response.send_message(
-                f"Position must be between **1** and **{len(state.waiting_room)}**.",
-                ephemeral=True,
-            )
-            return
-
-        state.waiting_room.remove(user_id)
-        state.waiting_room.insert(position - 1, user_id)
-
-        svc.save_lobby_state(guild_id)
-
-        await interaction.response.send_message(
-            f"Moved **{svc.players[user_id]['ign']}** to waiting-room position **#{position}**.",
-            ephemeral=True,
+        success, message = player_management.set_queue_position(
+            interaction.guild.id,
+            user_id,
+            position,
         )
-
-        await svc.post_new_draft_board(guild_id)
+        await _send_action_result(interaction, success, message)
 
     @bot.tree.command(name="swapplayers", description="Swap one lobby player with one waiting-room player.")
     @app_commands.describe(
@@ -270,24 +171,9 @@ def register_player_management_commands(bot):
             )
             return
 
-        waiting_index = state.waiting_room.index(waiting_id)
-
-        state.lobby.remove(lobby_id)
-        state.waiting_room.pop(waiting_index)
-        state.lobby.append(waiting_id)
-
-        state.waiting_room.insert(waiting_index, lobby_id)
-
-        state.votes.pop(lobby_id, None)
-
-        if lobby_id in state.captain_volunteers:
-            state.captain_volunteers.remove(lobby_id)
-
-        svc.save_lobby_state(guild_id)
-
-        await interaction.response.send_message(
-            f"Swapped **{svc.players[lobby_id]['ign']}** with **{svc.players[waiting_id]['ign']}**.",
-            ephemeral=True,
+        success, message = player_management.swap_players(
+            guild_id,
+            lobby_id,
+            waiting_id,
         )
-
-        await svc.post_new_draft_board(guild_id)
+        await _send_action_result(interaction, success, message)
