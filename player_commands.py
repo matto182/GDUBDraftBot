@@ -5,6 +5,11 @@ from config import ROLES, BACKLINE_ROLES
 from database import save_player, get_player_stats, mark_player_has_played_backline
 
 import draft_service as svc
+from player_stats_service import (
+    format_priority_usage,
+    format_role_frequency,
+    summarize_player_stats,
+)
 
 
 def register_player_commands(bot):
@@ -33,29 +38,28 @@ def register_player_commands(bot):
         member = interaction.guild.get_member(target_id)
         discord_name = f"{member.display_name} (@{member.name})" if member else player_data["discord_name"]
         stats_data = get_player_stats(guild_id, target_id)
-
-        roles_text = ""
-        if stats_data["roles"]:
-            for role, count in stats_data["roles"]:
-                roles_text += f"{role}: {count}\n"
-        else:
-            roles_text = "No role data."
-
-        priority_map = {1: "Primary", 2: "Secondary", 3: "Tertiary", 4: "Fourth", 999: "Fill/Off-role"}
-        priority_text = ""
-        if stats_data["priority_stats"]:
-            for priority, count in stats_data["priority_stats"]:
-                label = priority_map.get(priority, f"Priority {priority}")
-                priority_text += f"{label}: {count}\n"
-        else:
-            priority_text = "No assignment data."
+        summary = summarize_player_stats(stats_data)
 
         embed = discord.Embed(title=f"{player_data['ign']} Draft Stats", color=discord.Color.blue())
         embed.add_field(name="Discord", value=discord_name, inline=False)
-        embed.add_field(name="Drafts Played", value=str(stats_data["drafts_played"]), inline=True)
-        embed.add_field(name="Times Captain", value=str(stats_data["times_captain"]), inline=True)
-        embed.add_field(name="Roles Played", value=roles_text, inline=False)
-        embed.add_field(name="Role Priority Usage", value=priority_text, inline=False)
+        embed.add_field(name="Drafts Played", value=str(summary["drafts_played"]), inline=True)
+        embed.add_field(name="Times Captain", value=str(summary["times_captain"]), inline=True)
+        embed.add_field(name="Captain Rate", value=f"{summary['captain_rate']:.1f}%", inline=True)
+        embed.add_field(
+            name="Preferred Role Hit Rate",
+            value=f"{summary['preferred_role_hit_rate']:.1f}%",
+            inline=True,
+        )
+        embed.add_field(
+            name="Off-Role Rate",
+            value=f"{summary['off_role_rate']:.1f}%",
+            inline=True,
+        )
+        embed.add_field(name="Role Frequency", value=format_role_frequency(summary), inline=False)
+        embed.add_field(name="Role Priority Usage", value=format_priority_usage(summary), inline=False)
+        embed.set_footer(
+            text="Preferred Role Hit Rate counts assignments to any registered role preference."
+        )
         await interaction.response.send_message(embed=embed)
 
     @bot.tree.command(name="name", description="Register your Guild Wars 1 in-game name.")
