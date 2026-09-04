@@ -2,6 +2,7 @@ import sqlite3
 import time
 
 from config import DB_FILE
+import player_alias_repository as alias_repository
 
 
 def _connect(db_file=None):
@@ -43,7 +44,7 @@ def search_registered_players(query="", limit=25, db_file=None):
     rows = cursor.fetchall()
     conn.close()
 
-    return [
+    results = [
         {
             "user_id": user_id,
             "discord_name": discord_name,
@@ -51,6 +52,33 @@ def search_registered_players(query="", limit=25, db_file=None):
         }
         for user_id, discord_name, ign in rows
     ]
+
+    if query and len(results) < limit:
+        seen_ids = {entry["user_id"] for entry in results}
+        alias_ids = alias_repository.search_alias_user_ids(
+            query,
+            limit=limit,
+            db_file=db_file,
+        )
+
+        for user_id in alias_ids:
+            if user_id in seen_ids:
+                continue
+            record = get_player_record(user_id, db_file=db_file)
+            if not record:
+                continue
+            results.append(
+                {
+                    "user_id": record["user_id"],
+                    "discord_name": record["discord_name"],
+                    "ign": record["ign"],
+                }
+            )
+            seen_ids.add(user_id)
+            if len(results) >= limit:
+                break
+
+    return results
 
 
 def get_player_record(user_id, db_file=None):
@@ -119,16 +147,24 @@ def find_player(identifier, db_file=None):
 
     conn.close()
 
-    if not row:
+    if row:
+        return {
+            "user_id": row[0],
+            "discord_name": row[1],
+            "ign": row[2],
+            "roles": row[3],
+            "has_played_backline": bool(row[4]),
+        }
+
+    alias_user_id = alias_repository.resolve_alias_user_id(text, db_file=db_file)
+    if alias_user_id is None:
         return None
 
-    return {
-        "user_id": row[0],
-        "discord_name": row[1],
-        "ign": row[2],
-        "roles": row[3],
-        "has_played_backline": bool(row[4]),
-    }
+    return get_player_record(alias_user_id, db_file=db_file)
+
+
+def get_player_aliases(user_id, db_file=None):
+    return alias_repository.get_player_aliases(user_id, db_file=db_file)
 
 
 def get_hidden_weight(guild_id, user_id, db_file=None):

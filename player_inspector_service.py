@@ -52,6 +52,7 @@ def build_player_snapshot(guild_id, user_id, now=None, db_file=None):
         return None
 
     roles = normalize_roles(player.get("roles", []))
+    aliases = repository.get_player_aliases(user_id, db_file=db_file)
     weight = repository.get_hidden_weight(
         guild_id,
         user_id,
@@ -90,6 +91,7 @@ def build_player_snapshot(guild_id, user_id, now=None, db_file=None):
         "user_id": user_id,
         "discord_name": player["discord_name"],
         "ign": player["ign"],
+        "aliases": aliases,
         "roles": roles,
         "has_played_backline": player["has_played_backline"],
         "hidden_weight": weight,

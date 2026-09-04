@@ -38,6 +38,20 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS player_aliases (
+            user_id INTEGER NOT NULL,
+            alias TEXT NOT NULL COLLATE NOCASE,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (user_id, alias)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_player_aliases_alias
+        ON player_aliases(alias COLLATE NOCASE)
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS guild_config (
             guild_id INTEGER PRIMARY KEY,
             draft_channel_id INTEGER,

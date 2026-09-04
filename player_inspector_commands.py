@@ -36,7 +36,7 @@ def register_player_inspector_commands(bot):
         name="inspectplayer",
         description="View admin-only information about a registered draft player.",
     )
-    @app_commands.describe(player="Player IGN, Discord name, or ID")
+    @app_commands.describe(player="Current/previous IGN, Discord name, or ID")
     @app_commands.autocomplete(player=player_inspector_autocomplete)
     async def inspectplayer(
         interaction: discord.Interaction,
@@ -61,7 +61,7 @@ def register_player_inspector_commands(bot):
         record = inspector_service.resolve_player(player)
         if not record:
             await interaction.response.send_message(
-                "No registered player matched that IGN, Discord name, or ID.",
+                "No registered player matched that current/previous IGN, Discord name, or ID.",
                 ephemeral=True,
             )
             return

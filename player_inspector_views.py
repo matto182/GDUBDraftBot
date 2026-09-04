@@ -46,6 +46,8 @@ def _recent_activity_text(snapshot):
 
 def build_player_inspector_embed(snapshot):
     roles = ", ".join(snapshot["roles"]) if snapshot["roles"] else "None"
+    aliases = snapshot.get("aliases", [])
+    aliases_text = ", ".join(aliases) if aliases else "None"
     weight = snapshot["hidden_weight"]
     weight_text = f"{weight:+d}" if isinstance(weight, int) else str(weight)
 
@@ -58,6 +60,7 @@ def build_player_inspector_embed(snapshot):
         name="Registration",
         value=(
             f"**Discord:** {snapshot['discord_name']}\n"
+            f"**Previous IGNs:** {aliases_text}\n"
             f"**Roles:** {roles}\n"
             f"**Backline history:** "
             f"{'Yes' if snapshot['has_played_backline'] else 'No'}"

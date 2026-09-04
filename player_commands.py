@@ -10,6 +10,7 @@ from player_stats_service import (
     format_role_frequency,
     summarize_player_stats,
 )
+from player_alias_service import record_name_change, resolve_alias_user_id
 
 
 def register_player_commands(bot):
@@ -22,12 +23,22 @@ def register_player_commands(bot):
         if player:
             found = False
             for user_id, data in svc.players.items():
-                if data["ign"].lower() == player.lower():
+                if data["ign"].casefold() == player.casefold():
                     target_id = user_id
                     found = True
                     break
+
             if not found:
-                await interaction.response.send_message(f"No player found with IGN `{player}`.", ephemeral=True)
+                alias_user_id = resolve_alias_user_id(player)
+                if alias_user_id in svc.players:
+                    target_id = alias_user_id
+                    found = True
+
+            if not found:
+                await interaction.response.send_message(
+                    f"No player found with current or previous IGN `{player}`.",
+                    ephemeral=True,
+                )
                 return
 
         if target_id not in svc.players:
@@ -74,6 +85,8 @@ def register_player_commands(bot):
                 "has_played_backline": False,
             }
         else:
+            previous_ign = svc.players[user_id]["ign"]
+            record_name_change(user_id, previous_ign, ign)
             svc.players[user_id]["ign"] = ign
 
         save_player(user_id, interaction.user.display_name, svc.players[user_id]["ign"], svc.players[user_id]["roles"])
