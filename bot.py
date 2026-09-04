@@ -20,6 +20,8 @@ from config import (
 )
 
 from database import (
+    player_dm_is_on_cooldown,
+    mark_player_dm_sent,
     init_db,
     save_player,
     load_players_into,
@@ -1999,43 +2001,50 @@ async def start_captain_draft(interaction: discord.Interaction):
 
     await post_new_draft_board(guild_id)
 async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):
+    guild_id = interaction.guild.id
     dm_failed = []
 
     async def notify_team(team, team_name):
         for user_id, assigned_role in team:
-            print(f"Checking DM for {user_id}")
+            # Limit successful draft DMs to one per player, per guild, every 4 hours.
+            if player_dm_is_on_cooldown(guild_id, user_id):
+                print(f"DM cooldown active for {user_id}; skipping")
+                continue
 
             member = interaction.guild.get_member(user_id)
 
-            if not member:
-                print(f"Member not found: {user_id}")
-                continue
-
-            print(f"Found member: {member.name}")
-
-            if member.voice:
-                print(f"{member.name} already in voice")
-                continue
+            # Only hit Discord's API if the member cache misses.
+            if member is None:
+                try:
+                    member = await interaction.guild.fetch_member(user_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+                    print(f"Could not resolve member {user_id}: {error}")
+                    if user_id in players:
+                        dm_failed.append(players[user_id]["ign"])
+                    continue
 
             try:
-                print(f"Sending DM to {member.name}")
-
                 await member.send(
-                    f"The draft is ready.\n\n"
-                    f"You were drafted to **Team {team_name}** as **{assigned_role}**.\n"
-                    f"Please join Discord voice when you can."
+                    f"Your GvG draft is ready.\n\n"
+                    f"Team: **{team_name}**\n"
+                    f"Role: **{assigned_role}**\n\n"
+                    f"Please join your team voice channel."
                 )
 
-                print(f"DM sent to {member.name}")
+                # Failed sends do not start the cooldown.
+                mark_player_dm_sent(guild_id, user_id)
+                print(f"Draft DM sent to {member.name} ({user_id})")
 
-            except Exception as e:
-                print(f"DM failed for {member.name}: {e}")
-                dm_failed.append(players[user_id]["ign"])
+            except (discord.Forbidden, discord.HTTPException) as error:
+                print(f"Draft DM failed for {member.name} ({user_id}): {error}")
+                if user_id in players:
+                    dm_failed.append(players[user_id]["ign"])
 
     await notify_team(team_a, "A")
     await notify_team(team_b, "B")
 
     return dm_failed
+
 async def run_startdraft(interaction: discord.Interaction):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
@@ -2072,7 +2081,8 @@ async def run_startdraft(interaction: discord.Interaction):
 
     state.draft_result = (
         "**Mode:** Random Draft\n\n"
-        "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"
+        f"**Team A Comp:** {formation['team_a']}\n"
+        f"**Team B Comp:** {formation['team_b']}\n"
         f"**Balancing Score:** {formation['score']} lower is better\n\n"
         "### Team A\n"
         f"{team_text(guild_id, team_a)}\n\n"
