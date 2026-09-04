@@ -1,5 +1,7 @@
 import discord
 
+from config import normalize_roles
+
 
 class DraftBoardView(discord.ui.View):
     def __init__(self, ctx_factory):
@@ -298,6 +300,8 @@ class AdminDraftView(discord.ui.View):
             member.id
             for member in interaction.guild.members
         }
+        guild_member_ids.update(self.ctx.lobby)
+        guild_member_ids.update(self.ctx.waiting_room)
 
         guild_players = sorted(
             (
@@ -358,7 +362,7 @@ class CaptainPickSelect(discord.ui.Select):
         if captain_draft:
             for user_id in captain_draft.available:
                 p = ctx.players[user_id]
-                roles = ", ".join(p["roles"])
+                roles = ", ".join(normalize_roles(p["roles"]))
 
                 options.append(
                     discord.SelectOption(
@@ -514,7 +518,37 @@ class SetupAdminRoleView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Draft Admin role saved: {role.mention}\n\nSetup complete. Posting draft board.",
+            f"Draft Admin role saved: {role.mention}\n\nNow select the Owner role.",
+            ephemeral=True,
+            view=SetupOwnerRoleView(self.ctx)
+        )
+
+
+class SetupOwnerRoleView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=300)
+        self.ctx = ctx
+
+    @discord.ui.select(
+        cls=discord.ui.RoleSelect,
+        placeholder="Step 5: Select Owner role",
+        min_values=1,
+        max_values=1
+    )
+    async def select_owner_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
+            return
+
+        role = select.values[0]
+
+        self.ctx.save_guild_config(
+            interaction.guild.id,
+            owner_role_id=role.id
+        )
+
+        await interaction.response.send_message(
+            f"Owner role saved: {role.mention}\n\nSetup complete. Posting draft board.",
             ephemeral=True
         )
 

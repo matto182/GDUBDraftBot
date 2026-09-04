@@ -17,6 +17,7 @@ from config import (
     FRONTLINE_ROLES,
     MIDLINE_ROLES,
     BACKLINE_ROLES,
+    normalize_roles,
 )
 
 from database import (
@@ -36,6 +37,10 @@ from database import (
     get_lobby_ban,
     remove_lobby_ban,
     get_active_lobby_bans,
+    get_guild_player_weights,
+    get_player_weight,
+    set_player_weight,
+    mark_player_has_played_backline,
 )
 
 from draft_logic import (
@@ -98,6 +103,9 @@ def fill_lobby_from_waiting_room(guild_id):
 
     while len(state.lobby) < 16 and state.waiting_room:
         next_player = state.waiting_room.pop(0)
+
+        if get_lobby_ban(guild_id, next_player):
+            continue
 
         if next_player not in state.lobby:
             state.lobby.append(next_player)
@@ -179,7 +187,8 @@ def build_draft_board_embed(guild_id):
 
         for i, user_id in enumerate(lobby, start=1):
             p = players[user_id]
-            roles = ", ".join(p["roles"]) if p["roles"] else "No roles set"
+            current_roles = normalize_roles(p.get("roles", []))
+            roles = ", ".join(current_roles) if current_roles else "No roles set"
 
             lobby_text += f"{i}. **{p['ign']}** — {roles}\n"
     else:
@@ -190,7 +199,8 @@ def build_draft_board_embed(guild_id):
 
         for i, user_id in enumerate(waiting_room, start=1):
             p = players[user_id]
-            roles = ", ".join(p["roles"]) if p["roles"] else "No roles set"
+            current_roles = normalize_roles(p.get("roles", []))
+            roles = ", ".join(current_roles) if current_roles else "No roles set"
 
             waiting_text += f"{i}. **{p['ign']}** — {roles}\n"
     else:
@@ -381,8 +391,9 @@ async def timeout_from_draft(
     fill_lobby_from_waiting_room(guild_id)
     save_lobby_state(guild_id)
 
+    ign = players.get(user_id, {}).get("ign", "Unknown player")
     await interaction.response.send_message(
-        f"{player_label(guild_id, user_id)} has been timed out from draft lobbies **{duration_label}**.",
+        f"**{ign}** has been timed out from draft lobbies **{duration_label}**.",
         ephemeral=True
     )
 
@@ -654,6 +665,8 @@ async def move_teams_to_voice(interaction: discord.Interaction):
         )
         return
 
+    await interaction.response.defer(ephemeral=True)
+
     moved = 0
     failed = []
 
@@ -684,7 +697,7 @@ async def move_teams_to_voice(interaction: discord.Interaction):
     if failed:
         msg += "\n\nCould not move:\n" + "\n".join(failed)
 
-    await interaction.response.send_message(msg, ephemeral=True)
+    await interaction.followup.send(msg, ephemeral=True)
 async def wipe_lobby(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
@@ -725,6 +738,121 @@ def is_draft_admin(interaction: discord.Interaction):
     return any(role.id == admin_role_id for role in interaction.user.roles)
 def get_captain_draft():
     return captain_draft
+def has_owner_role(guild_id, member):
+    config = get_guild_config(guild_id)
+    if not config or not config.get("owner_role_id"):
+        return False
+    owner_role_id = config["owner_role_id"]
+    return any(role.id == owner_role_id for role in getattr(member, "roles", []))
+
+
+async def handle_owner_prefix_message(message: discord.Message):
+    if message.author.bot or message.guild is None:
+        return
+
+    content = message.content.strip()
+    content_cf = content.casefold()
+    is_adjust = content_cf.startswith("!adjust ")
+    is_debugweights = content_cf == "!debugweights"
+
+    if not is_adjust and not is_debugweights:
+        return
+
+    # Intentionally silent for non-owners.
+    if not has_owner_role(message.guild.id, message.author):
+        return
+
+    try:
+        await message.delete()
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+        pass
+
+    if is_debugweights:
+        debug = get_state(message.guild.id).last_balance_debug
+
+        if not debug:
+            response = (
+                "No random-draft balance debug data is available yet. "
+                "Run an autodraft first, then use this command again."
+            )
+        else:
+            def format_team(team_key, team_name):
+                team = debug[team_key]
+                lines = [
+                    f"**Team {team_name}**",
+                    f"Hidden weight total: {team['weight']:+d}",
+                    f"Composition penalty: {team['composition_penalty']}",
+                    f"Effective strength: {team['effective_strength']:+d}",
+                    f"Off-role slots: {team['off_role_count']}",
+                    "Player weights:",
+                ]
+                for player in team["players"]:
+                    lines.append(f"- {player['ign']}: {player['weight']:+d}")
+                return "\n".join(lines)
+
+            response = (
+                "**Last Random Draft — Hidden Balance Debug**\n\n"
+                f"{format_team('team_a', 'A')}\n\n"
+                f"{format_team('team_b', 'B')}\n\n"
+                f"Effective-strength difference: {debug['strength_difference']}\n"
+                f"Final optimizer score: {debug['optimizer_score']}"
+            )
+
+        try:
+            await message.author.send(response)
+        except discord.HTTPException:
+            pass
+        return
+
+    payload = content[len("!adjust "):].strip()
+    parts = payload.rsplit(maxsplit=1)
+
+    if len(parts) != 2:
+        try:
+            await message.author.send("Usage: `!adjust Player IGN 200`")
+        except discord.HTTPException:
+            pass
+        return
+
+    player_name, points_text = parts
+
+    try:
+        points = int(points_text)
+    except ValueError:
+        try:
+            await message.author.send(
+                "The final value must be a whole number, for example `200` or `-200`."
+            )
+        except discord.HTTPException:
+            pass
+        return
+
+    load_players()
+    matches = [
+        (user_id, data)
+        for user_id, data in players.items()
+        if data["ign"].casefold() == player_name.casefold()
+    ]
+
+    if not matches:
+        response = f"No player found with IGN `{player_name}`."
+    elif len(matches) > 1:
+        response = f"More than one player uses the IGN `{player_name}`."
+    else:
+        user_id, player_data = matches[0]
+        set_player_weight(message.guild.id, user_id, points)
+        response = (
+            f"Cleared {player_data['ign']}'s adjustment."
+            if points == 0
+            else f"Set {player_data['ign']} to {points:+d}."
+        )
+
+    try:
+        await message.author.send(response)
+    except discord.HTTPException:
+        pass
+
+
 async def refresh_board(interaction: discord.Interaction):
     await interaction.message.edit(
         embed=build_draft_board_embed(interaction.guild.id),
@@ -828,6 +956,7 @@ class MyBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
+        intents.message_content = True
 
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
@@ -1107,14 +1236,10 @@ async def timeouts(interaction: discord.Interaction):
 
     for ban in active_bans:
         user_id = ban["user_id"]
-        member = interaction.guild.get_member(user_id)
-
-        if user_id in players:
-            name = f"**{players[user_id]['ign']}** (<@{user_id}>)"
-        elif member:
-            name = member.mention
+        if user_id in players and players[user_id].get("ign"):
+            name = f"**{players[user_id]['ign']}**"
         else:
-            name = f"<@{user_id}>"
+            name = "**Unknown player**"
 
         if ban["expires_at"] is None:
             duration = "**Permanent**"
@@ -1658,7 +1783,8 @@ async def filltest(interaction: discord.Interaction):
         players[fake_id] = {
             "discord_name": f"TestUser{i+1}",
             "ign": ign,
-            "roles": roles
+            "roles": roles,
+            "has_played_backline": bool(set(roles) & BACKLINE_ROLES),
         }
 
         save_player(
@@ -1823,6 +1949,11 @@ async def adminboard(interaction: discord.Interaction):
         ephemeral=True
     )    
 @bot.event
+async def on_message(message: discord.Message):
+    await handle_owner_prefix_message(message)
+
+
+@bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
@@ -1863,6 +1994,7 @@ async def name(interaction: discord.Interaction, ign: str):
             "discord_name": interaction.user.display_name,
             "ign": ign,
             "roles": [],
+            "has_played_backline": False,
         }
     else:
         players[user_id]["ign"] = ign
@@ -1917,11 +2049,16 @@ async def role(
 
     players[user_id]["roles"] = chosen
 
+    if set(chosen) & BACKLINE_ROLES:
+        players[user_id]["has_played_backline"] = True
+        mark_player_has_played_backline(user_id)
+
     save_player(
         user_id,
         interaction.user.display_name,
         players[user_id]["ign"],
-        players[user_id]["roles"]
+        players[user_id]["roles"],
+        has_played_backline=players[user_id].get("has_played_backline", False)
     )
 
     await interaction.response.send_message(
@@ -2065,14 +2202,49 @@ async def run_startdraft(interaction: discord.Interaction):
         await start_captain_draft(interaction)
         return
 
-    # Random draft work can exceed Discord's initial interaction window.
-    # Acknowledge the button immediately, then use a follow-up response.
     await interaction.response.defer(ephemeral=True)
-    team_a, team_b, formation = generate_random_teams(players, state.lobby)
+
+    player_weights = get_guild_player_weights(guild_id)
+
+    try:
+        team_a, team_b, formation = generate_random_teams(
+            players,
+            state.lobby,
+            player_weights,
+        )
+    except ValueError as error:
+        await interaction.followup.send(str(error), ephemeral=True)
+        return
 
     state.final_team_a = team_a
     state.final_team_b = team_b
-    #Saving draft stats
+
+    def build_debug_team(team, prefix):
+        return {
+            "weight": int(formation[f"{prefix}_weight"]),
+            "composition_penalty": formation[f"{prefix}_composition_penalty"],
+            "effective_strength": int(formation[f"{prefix}_effective_strength"]),
+            "off_role_count": formation[f"{prefix}_off_role_count"],
+            "players": [
+                {
+                    "user_id": user_id,
+                    "ign": players[user_id]["ign"],
+                    "weight": int(player_weights.get(user_id, 0)),
+                }
+                for user_id, _role in team
+            ],
+        }
+
+    state.last_balance_debug = {
+        "team_a": build_debug_team(team_a, "team_a"),
+        "team_b": build_debug_team(team_b, "team_b"),
+        "strength_difference": abs(
+            int(formation["team_a_effective_strength"])
+            - int(formation["team_b_effective_strength"])
+        ),
+        "optimizer_score": formation["score"],
+    }
+
     save_completed_draft(
         guild_id=guild_id,
         mode="random",
@@ -2092,15 +2264,14 @@ async def run_startdraft(interaction: discord.Interaction):
         "### Team B\n"
         f"{team_text(guild_id, team_b)}"
     )
+
     dm_failed = await notify_drafted_players(interaction, team_a, team_b)
 
     msg = "Draft started."
-
     if dm_failed:
         msg += "\n\nCould not DM:\n" + "\n".join(dm_failed)
 
     await interaction.followup.send(msg, ephemeral=True)
-
     await post_new_draft_board(guild_id)
 
 
