@@ -14,7 +14,7 @@ flowchart TD
     Services[Focused service modules]
     Format[draft_format_service.py]
     Logic[Draft logic modules]
-    Facades[draft_service.py / database.py / views.py]
+    Facades["draft_service.py / database.py / views.py"]
     Repos[Repository modules]
     DB[(SQLite)]
     State[state.py + service_runtime.py]
@@ -107,8 +107,8 @@ The configurable format is a per-server setting from **1v1 through 8v8**, with *
 
 ```mermaid
 flowchart TD
-    A[/setup or /draftformat]
-    B[setup_commands.py / setup_views.py]
+    A["/setup or /draftformat"]
+    B["setup_commands.py / setup_views.py"]
     C[draft_format_service.py]
     D[guild_repository.py]
     E[(guild_config)]
@@ -146,7 +146,7 @@ Files that need capacity do not maintain their own independent setting; they cal
 
 ```mermaid
 flowchart TD
-    A[/signup or Sign Up button]
+    A["/signup or Sign Up button"]
     B[lobby_commands.py or draft_board_views.py]
     C[view_context_service.py]
     D[lobby_service.signup_player]
@@ -183,7 +183,7 @@ Key rules:
 
 ```mermaid
 flowchart TD
-    A[/startdraft or Start Draft button]
+    A["/startdraft or Start Draft button"]
     B[draft_execution_service.py]
     C[draft_format_service.py]
     D[random_draft.py]
@@ -192,7 +192,7 @@ flowchart TD
     G[draft_repository.py]
     H[notification_service.py]
     I[board_service.py]
-    J[(draft_history / draft_players)]
+    J["draft_history / draft_players"]
 
     A --> B
     B --> C
@@ -219,7 +219,7 @@ flowchart TD
     A[Captain vote wins]
     B[draft_execution_service.start_captain_draft]
     C[captain_draft.py]
-    D[Draft Board / captain_views.py]
+    D["Draft Board / captain_views.py"]
     E[draft_execution_service.handle_captain_pick]
     F[role_assignment.py]
     G[draft_repository.py]
@@ -254,7 +254,7 @@ Captain Draft is supported from **2v2 through 8v8**. 1v1 uses the head-to-head R
 
 ```mermaid
 flowchart TD
-    A[/admin, /adminboard, or Draft Board Admin Panel]
+    A["/admin, /adminboard, or Draft Board Admin Panel"]
     B[admin_panel_views.py]
     C[admin_panel_player_views.py]
     D[admin_panel_moderation_views.py]
@@ -284,13 +284,13 @@ The three Admin Panel entry points converge on the same `AdminPanelView`. Start 
 
 ```mermaid
 flowchart TD
-    A[/name]
+    A["/name"]
     B[player_commands.py]
     C[player_alias_service.py]
     D[player_alias_repository.py]
     E[player_repository.py]
 
-    F[/stats]
+    F["/stats"]
     G[player_stats_service.py]
     H[draft_repository.py]
 
@@ -312,7 +312,7 @@ Discord user ID is the persistent player identity. Changing `/name` updates the 
 
 ```mermaid
 flowchart TD
-    A[/inspectplayer]
+    A["/inspectplayer"]
     B[player_inspector_commands.py]
     C[player_inspector_service.py]
     D[player_inspector_repository.py]
@@ -337,7 +337,7 @@ The inspector command resolves the player, builds a snapshot, and renders it thr
 
 ```mermaid
 flowchart TD
-    A[/history]
+    A["/history"]
     B[draft_history_commands.py]
     C[draft_history_views.py]
     D[draft_history_service.py]
@@ -359,8 +359,8 @@ The repository reads paged history/details, the service converts rows into prese
 
 ```mermaid
 flowchart TD
-    A[/timeout or Admin Panel or Inspector]
-    B[moderation_commands.py / moderation views]
+    A["/timeout or Admin Panel or Inspector"]
+    B["moderation_commands.py / moderation views"]
     C[moderation_service.py]
     D[moderation_repository.py]
     E[lobby_state_service.py]
@@ -403,7 +403,7 @@ The public persistence path is:
 
 ```mermaid
 flowchart LR
-    Services[Services / commands]
+    Services["Services / commands"]
     DBFacade[database.py]
     Repos[Focused repositories]
     Schema[database_schema.py]
