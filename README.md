@@ -4,7 +4,7 @@ A persistent, multi-server Discord bot for organizing **Guild Wars 1 GvG drafts*
 
 GDUB Draft Bot handles the full draft workflow inside Discord: player registration, role preferences, lobby and waiting-room management, Random and Captain drafts, team assignment, voice-channel movement, draft history, statistics, moderation, and admin controls.
 
-The bot is designed for communities that repeatedly run 8v8 GvG drafts and want the draft process to stay fast, organized, and persistent between bot restarts.
+The bot is designed for communities that repeatedly run Guild Wars 1 GvG drafts and want the draft process to stay fast, organized, configurable, and persistent between bot restarts. Drafts can be configured from **1v1 through 8v8**, with **8v8 as the default**.
 
 ---
 
@@ -27,6 +27,7 @@ Players can use the board to:
 
 The board displays:
 
+- Current draft format
 - Active lobby players
 - Waiting-room players
 - Current role needs
@@ -109,9 +110,22 @@ Players can join with:
 
 or the **Sign Up** button on the draft board.
 
-The active lobby holds up to **16 players**.
+The active lobby capacity is based on the server's configured draft format.
 
-Once the active lobby is full, additional players are placed into the waiting room.
+| Format | Lobby Capacity |
+| --- | ---: |
+| 1v1 | 2 |
+| 2v2 | 4 |
+| 3v3 | 6 |
+| 4v4 | 8 |
+| 5v5 | 10 |
+| 6v6 | 12 |
+| 7v7 | 14 |
+| 8v8 | 16 |
+
+**8v8 is the default.**
+
+Once the active lobby reaches the configured capacity, additional players are placed into the waiting room.
 
 ### FIFO Waiting Room
 
@@ -144,6 +158,40 @@ These commands show the current lobby, waiting room, votes, and Captain Draft st
 
 ---
 
+## Configurable Draft Formats
+
+Each Discord server can choose its own team size from **1v1 through 8v8**.
+
+Admins can change the format with:
+
+```text
+/draftformat
+```
+
+The format is stored per server and defaults to **8v8**.
+
+Changing the format automatically updates:
+
+- Active lobby capacity
+- Waiting-room promotion behavior
+- Start Draft requirements
+- Random Draft team size
+- Captain Draft team size
+- Role-composition targets
+- Draft Board capacity display
+- Admin Panel capacity display
+- Draft History format information
+
+If the format is reduced while players are already signed up, players beyond the new lobby capacity are moved to the **front of the waiting room** while preserving their order.
+
+If the format is increased, waiting-room players are automatically promoted into newly available lobby slots using the normal FIFO rules.
+
+The format cannot be changed while a draft result or Captain Draft is active. Reset the current draft first.
+
+For **1v1**, Captain Mode is disabled and the draft runs as a head-to-head Random Draft.
+
+---
+
 ## Draft Modes
 
 Players vote for a draft mode with:
@@ -159,13 +207,15 @@ The available modes are:
 - Captain Mode
 - Random Draft
 
-When the draft starts, the current vote determines the mode.
+Captain Mode is available for **2v2 through 8v8**. In **1v1**, Captain voting and captain volunteering are disabled.
+
+When the draft starts, the current vote determines the mode. If Captain Mode does not win, the bot runs a Random Draft.
 
 ---
 
 ## Random Draft
 
-Random Draft automatically creates two 8-player teams while considering:
+Random Draft automatically creates two teams at the server's configured size while considering:
 
 - Registered role preferences
 - Frontline distribution
@@ -175,7 +225,7 @@ Random Draft automatically creates two 8-player teams while considering:
 - Role scarcity
 - Off-role assignments when required to complete a valid draft
 
-The bot supports the normal GvG team structures used by the draft system and automatically assigns each player a role on their final team.
+The bot adapts team-composition targets to the selected format and automatically assigns each player a role on their final team. Smaller 1v1 and 2v2 formats use flexible role assignment instead of forcing a full GvG composition.
 
 Completed Random Drafts are saved to draft history.
 
@@ -191,7 +241,7 @@ Players volunteer to captain with:
 
 or the **Volunteer Captain** button.
 
-If Captain Mode wins the vote:
+For formats from **2v2 through 8v8**, if Captain Mode wins the vote:
 
 1. Two volunteers are selected as captains.
 2. The Captain Draft begins.
@@ -205,7 +255,7 @@ If Captain Mode wins the vote:
 5. Once all players are selected, the bot assigns team roles based on player preferences and team composition.
 6. The completed draft is saved to history.
 
-The draft board shows the current picker, both captains, drafted teams, and remaining available players.
+The pick sequence automatically scales to the selected team size. The draft board shows the current picker, both captains, drafted teams, and remaining available players.
 
 ---
 
@@ -219,7 +269,7 @@ Admins can start a draft with:
 
 or the **Start Draft** button on the draft board.
 
-The active lobby must contain exactly **16 players**.
+The active lobby must contain exactly the number of players required by the configured format, from **2 players for 1v1** through **16 players for 8v8**.
 
 Start Draft intentionally remains part of the normal draft-board workflow rather than the admin management panel.
 
@@ -241,6 +291,7 @@ History includes:
 
 - Draft ID
 - Draft mode
+- Draft format
 - Completion time
 - Team A
 - Team B
@@ -331,6 +382,7 @@ The **Admin Panel** button on the persistent draft board also opens this same pa
 
 The panel displays a quick overview of:
 
+- Current draft format
 - Active lobby size
 - Waiting-room size
 - Current draft state
@@ -487,7 +539,7 @@ Queue positions start at `1`.
 
 Swaps one active-lobby player with one waiting-room player.
 
-This is useful when the lobby is already full.
+This is useful when the lobby is already at the configured capacity.
 
 ---
 
@@ -531,7 +583,7 @@ Clears the lobby, waiting room, draft state, votes, and captain volunteers.
 /filltest
 ```
 
-Admin utility for filling the lobby with test players.
+Admin utility for filling the lobby with the number of test players required by the current draft format.
 
 ---
 
@@ -578,7 +630,7 @@ Run:
 /setup
 ```
 
-Use the setup interface to configure the server's draft channel, team voice channels, and Draft Admin role.
+Use the setup interface to configure the server's draft channel, team voice channels, Draft Admin role, and draft format. The default format is **8v8**.
 
 ---
 
@@ -637,6 +689,7 @@ After registration, they can join with `/signup` or the Sign Up button.
 ```text
 /admin
 /adminboard
+/draftformat
 /inspectplayer
 /addplayer
 /moveplayer
@@ -667,10 +720,10 @@ Persisted information includes:
 - Previous player IGNs
 - Registered role preferences
 - Backline-history flags
-- Guild configuration
+- Guild configuration and per-server draft format
 - Lobby state
 - Waiting-room state
-- Completed draft history
+- Completed draft history, including the format used for each draft
 - Per-player draft assignments
 - Lobby timeouts
 - Draft notification cooldown data
@@ -686,6 +739,7 @@ Guild-specific information is isolated by Discord server where appropriate.
 Each server can maintain its own:
 
 - Draft configuration
+- Draft format
 - Draft board
 - Lobby
 - Waiting room
@@ -763,6 +817,9 @@ lobby_state_service.py
 draft_execution_service.py
     Random Draft and Captain Draft execution
 
+draft_format_service.py
+    Per-server 1v1–8v8 format, capacity calculation, and lobby resizing
+
 board_service.py
     Draft-board rendering and refresh behavior
 
@@ -794,17 +851,26 @@ draft_logic.py
     Draft-logic compatibility facade
 
 role_assignment.py
-balance_scoring.py
 random_draft.py
 captain_draft.py
 role_needs.py
-    Focused team-generation and role-assignment logic
+    Focused team-generation, composition, and role-assignment logic
 
 views.py
     Compatibility facade for Discord UI views
 
 tests/
     Automated regression tests
+```
+
+---
+
+# Architecture
+
+For a detailed file-by-file map, dependency graph, and execution-flow guide, see:
+
+```text
+ARCHITECTURE.md
 ```
 
 ---
