@@ -1,6 +1,5 @@
 import discord
 
-from admin_views import AdminDraftView
 from captain_views import CaptainPickView
 
 class DraftBoardView(discord.ui.View):
@@ -92,6 +91,8 @@ class DraftBoardView(discord.ui.View):
 
     @discord.ui.button(label="Admin Panel", style=discord.ButtonStyle.secondary, custom_id="draft_admin_panel")
     async def admin_panel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from admin_panel_views import AdminPanelView, build_admin_panel_embed
+
         ctx = self.ctx_factory(interaction.guild.id)
 
         if not ctx.is_draft_admin(interaction):
@@ -102,8 +103,8 @@ class DraftBoardView(discord.ui.View):
             return
 
         await interaction.response.send_message(
-            "Admin draft controls:",
-            view=AdminDraftView(ctx),
+            embed=build_admin_panel_embed(interaction.guild.id),
+            view=AdminPanelView(interaction.guild.id),
             ephemeral=True
         )
 
