@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 import discord
 
+import draft_service as svc
+import moderation_service
 import player_inspector_service as inspector_service
 
 
@@ -42,6 +44,14 @@ def _recent_activity_text(snapshot):
         )
 
     return "\n".join(lines)
+
+
+def _timeout_control_state(snapshot):
+    active = bool(snapshot and snapshot.get("timeout"))
+    return {
+        "label": "Change Timeout" if active else "Timeout Player",
+        "show_remove": active,
+    }
 
 
 def build_player_inspector_embed(snapshot):
@@ -115,6 +125,114 @@ class PlayerInspectorView(discord.ui.View):
         self.user_id = user_id
         self.is_admin_check = is_admin_check
 
+        self.timeout_button = discord.ui.Button(
+            label="Timeout Player",
+            style=discord.ButtonStyle.danger,
+            row=1,
+        )
+        self.timeout_button.callback = self._timeout_button_callback
+        self.add_item(self.timeout_button)
+
+        self.remove_timeout_button = discord.ui.Button(
+            label="Remove Timeout",
+            style=discord.ButtonStyle.success,
+            row=1,
+        )
+        self.remove_timeout_button.callback = self._remove_timeout_button_callback
+
+        snapshot = inspector_service.build_player_snapshot(
+            self.guild_id,
+            self.user_id,
+        )
+        self._sync_timeout_controls(snapshot)
+
+    def _sync_timeout_controls(self, snapshot):
+        state = _timeout_control_state(snapshot)
+        self.timeout_button.label = state["label"]
+
+        remove_is_present = self.remove_timeout_button in self.children
+        if state["show_remove"] and not remove_is_present:
+            self.add_item(self.remove_timeout_button)
+        elif not state["show_remove"] and remove_is_present:
+            self.remove_item(self.remove_timeout_button)
+
+    async def _timeout_button_callback(self, interaction: discord.Interaction):
+        if not await self._ensure_admin(interaction):
+            return
+
+        snapshot = inspector_service.build_player_snapshot(
+            self.guild_id,
+            self.user_id,
+        )
+        if not snapshot:
+            await interaction.response.send_message(
+                "That player is no longer registered.",
+                ephemeral=True,
+            )
+            return
+
+        # Import lazily so the inspector can reuse the existing timeout picker
+        # without introducing a module-load cycle through the views facade.
+        from views import TimeoutDurationView
+
+        action = "change the timeout for" if snapshot.get("timeout") else "timeout"
+        await interaction.response.send_message(
+            f"Choose how long to {action} **{snapshot['ign']}** from draft lobbies. "
+            "Use **Refresh** on the inspector after choosing a duration.",
+            view=TimeoutDurationView(
+                svc.get_view_context(self.guild_id),
+                self.user_id,
+            ),
+            ephemeral=True,
+        )
+
+    async def _remove_timeout_button_callback(self, interaction: discord.Interaction):
+        if not await self._ensure_admin(interaction):
+            return
+
+        snapshot = inspector_service.build_player_snapshot(
+            self.guild_id,
+            self.user_id,
+        )
+        if not snapshot:
+            await interaction.response.send_message(
+                "That player is no longer registered.",
+                ephemeral=True,
+            )
+            return
+
+        ign = snapshot["ign"]
+        removed = moderation_service.remove_lobby_timeout(
+            self.guild_id,
+            self.user_id,
+        )
+
+        refreshed = inspector_service.build_player_snapshot(
+            self.guild_id,
+            self.user_id,
+        )
+        self._sync_timeout_controls(refreshed)
+
+        if not removed:
+            await interaction.response.edit_message(
+                embed=build_player_inspector_embed(refreshed),
+                view=self,
+            )
+            await interaction.followup.send(
+                f"**{ign}** does not have an active draft lobby timeout.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.edit_message(
+            embed=build_player_inspector_embed(refreshed),
+            view=self,
+        )
+        await interaction.followup.send(
+            f"Removed the draft lobby timeout for **{ign}**.",
+            ephemeral=True,
+        )
+
     async def _ensure_admin(self, interaction):
         if self.is_admin_check(interaction):
             return True
@@ -145,6 +263,7 @@ class PlayerInspectorView(discord.ui.View):
             )
             return
 
+        self._sync_timeout_controls(snapshot)
         await interaction.response.edit_message(
             embed=build_player_inspector_embed(snapshot),
             view=self,

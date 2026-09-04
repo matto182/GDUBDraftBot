@@ -2,7 +2,7 @@ import time
 
 import discord
 
-from database import get_guild_config, set_lobby_ban
+from database import get_guild_config, remove_lobby_ban, set_lobby_ban
 from state import get_state
 from service_runtime import players
 from lobby_state_service import fill_lobby_from_waiting_room, save_lobby_state
@@ -34,6 +34,11 @@ def format_timeout_remaining(expires_at):
         parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
 
     return ", ".join(parts[:2]) or "less than 1 minute"
+
+def remove_lobby_timeout(guild_id: int, user_id: int):
+    """Remove an existing draft lobby timeout for a player."""
+    return remove_lobby_ban(guild_id, user_id)
+
 
 def is_draft_admin(interaction: discord.Interaction):
     if interaction.user.guild_permissions.administrator:
