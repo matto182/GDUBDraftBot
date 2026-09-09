@@ -129,10 +129,12 @@ def test_seeded_random_draft_stress_preserves_core_invariants(seed):
 
     assert_core_draft_invariants(players, lobby, team_a, team_b)
     assert formation["team_a"] in {
+        "1 Front / 4 Mid / 3 Back",
         "2 Front / 3 Mid / 3 Back",
         "3 Front / 2 Mid / 3 Back",
     }
     assert formation["team_b"] in {
+        "1 Front / 4 Mid / 3 Back",
         "2 Front / 3 Mid / 3 Back",
         "3 Front / 2 Mid / 3 Back",
     }
