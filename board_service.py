@@ -62,6 +62,8 @@ def build_draft_board_embed(guild_id):
     captain_volunteers = state.captain_volunteers
     draft_result = state.draft_result
     captain_draft = state.captain_draft
+    final_team_a = state.final_team_a
+    final_team_b = state.final_team_b
 
     captain_votes = list(votes.values()).count("captain")
     random_votes = list(votes.values()).count("random")
@@ -148,6 +150,13 @@ def build_draft_board_embed(guild_id):
                 player_label(guild_id, p)
                 for p in captain_draft.available
             )
+
+    elif draft_result and final_team_a and final_team_b:
+        description += "\n\n## Team A\n"
+        description += team_text(guild_id, final_team_a)
+
+        description += "\n\n## Team B\n"
+        description += team_text(guild_id, final_team_b)
 
     return discord.Embed(
         title="GW1 GvG Draft Board",
