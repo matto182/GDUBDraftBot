@@ -2,7 +2,7 @@ import discord
 
 from config import normalize_roles
 from database import get_guild_config, save_board_message_id
-from draft_logic import analyze_role_needs, role_sort_key
+from draft_logic import role_sort_key
 from state import get_state
 import service_runtime as runtime
 from service_runtime import load_players, players
@@ -65,21 +65,6 @@ def build_draft_board_embed(guild_id):
 
     captain_votes = list(votes.values()).count("captain")
     random_votes = list(votes.values()).count("random")
-    needs = analyze_role_needs(players, lobby)
-
-    needs_text = ""
-
-    if needs["high"]:
-        needs_text += "**High Priority:** " + ", ".join(needs["high"]) + "\n"
-
-    if needs["medium"]:
-        needs_text += "**Medium Priority:** " + ", ".join(needs["medium"]) + "\n"
-
-    if needs["low"]:
-        needs_text += "**Low Priority:** " + ", ".join(needs["low"]) + "\n"
-
-    if not needs_text:
-        needs_text = "Lobby role coverage looks good."
 
     if lobby:
         lobby_text = ""
@@ -105,30 +90,38 @@ def build_draft_board_embed(guild_id):
     else:
         waiting_text = "Waiting room is empty."
 
-    if captain_volunteers:
-        captain_text = "\n".join(
-            player_label(guild_id, p)
-            for p in captain_volunteers
-        )
-    else:
-        captain_text = "No captain volunteers yet."
-
     description = (
         "**Before signing up:**\n"
         "1. Use `/name` to set your in-game name.\n"
         "2. Use `/role` to pick your roles, in order of priority.\n\n"
         f"## Lobby — {len(lobby)}/16\n"
         f"{lobby_text}\n\n"
-        f"## Current Needs\n"
-        f"{needs_text}\n\n"
         f"## Waiting Room — {len(waiting_room)}\n"
-        f"{waiting_text}\n\n"
-        f"## Votes\n"
-        f"Captain Mode: **{captain_votes}**\n"
-        f"Random Draft: **{random_votes}**\n\n"
-        f"## Captain Volunteers\n"
-        f"{captain_text}"
+        f"{waiting_text}"
     )
+
+    # Votes and captain volunteers are only useful before a draft starts.
+    if not captain_draft and not draft_result:
+        description += (
+            "\n\n## Votes\n"
+            f"Captain Mode: **{captain_votes}**\n"
+            f"Random Draft: **{random_votes}**"
+        )
+
+        # Keep the board compact until Captain Mode actually has support.
+        if captain_votes > 0:
+            if captain_volunteers:
+                captain_text = "\n".join(
+                    player_label(guild_id, p)
+                    for p in captain_volunteers
+                )
+            else:
+                captain_text = "No captain volunteers yet."
+
+            description += (
+                "\n\n## Captain Volunteers\n"
+                f"{captain_text}"
+            )
 
     if captain_draft:
         next_picker = captain_draft.current_picker()
@@ -155,9 +148,6 @@ def build_draft_board_embed(guild_id):
                 player_label(guild_id, p)
                 for p in captain_draft.available
             )
-
-    elif draft_result:
-        description += f"\n\n## Draft Result\n{draft_result}"
 
     return discord.Embed(
         title="GW1 GvG Draft Board",

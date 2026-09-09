@@ -39,7 +39,7 @@ def _quick_team_penalty(team_ids, role_cache, players):
     )
 
     formation_penalties = []
-    for front_needed, mid_needed in ((2, 3), (3, 2)):
+    for front_needed, mid_needed in ((1, 4), (2, 3), (3, 2)):
         formation_penalties.append(
             backline_penalty
             + max(0, front_needed - counts["Frontline"]) * OFF_ROLE_COST
@@ -47,6 +47,36 @@ def _quick_team_penalty(team_ids, role_cache, players):
         )
 
     return min(formation_penalties)
+
+
+def _role_available_for_both_teams(lobby, role_cache, role):
+    """Return True when at least two lobby players explicitly selected a role."""
+    return sum(1 for user_id in lobby if role in role_cache[user_id]) >= 2
+
+
+def _team_has_explicit_role(team_ids, role_cache, role):
+    return any(role in role_cache[user_id] for user_id in team_ids)
+
+
+def _split_has_required_coverage(
+    split_key,
+    role_cache,
+    require_frontline,
+    required_backline_roles,
+):
+    """Reject obviously bad splits before running the expensive exact solver."""
+    for team_ids in split_key:
+        if require_frontline and not _team_has_explicit_role(
+            team_ids, role_cache, "Frontline"
+        ):
+            return False
+
+        for role in required_backline_roles:
+            if not _team_has_explicit_role(team_ids, role_cache, role):
+                return False
+
+    return True
+
 
 def generate_random_teams(players, lobby, player_weights=None):
     """Build two balanced teams while respecting role fit and hidden weights."""
@@ -62,8 +92,22 @@ def generate_random_teams(players, lobby, player_weights=None):
     quick_candidates = []
     enforce_extreme_rule = _extreme_rule_is_feasible(lobby, player_weights)
 
-    QUICK_SPLIT_SAMPLES = 1500
-    EXACT_FINALISTS = 180
+    # When the lobby has enough explicitly registered players to put one of
+    # these roles on each team, reject splits that fail that basic structure.
+    require_frontline = _role_available_for_both_teams(
+        lobby, role_cache, "Frontline"
+    )
+    required_backline_roles = tuple(
+        role
+        for role in ("Prot Monk", "Heal Monk", "8 Support")
+        if _role_available_for_both_teams(lobby, role_cache, role)
+    )
+
+    # The previous 1500/180 search was unnecessarily expensive for a
+    # 16-player lobby. These values keep a useful candidate pool while
+    # reducing quick split work by 80% and exact finalists by 83%.
+    QUICK_SPLIT_SAMPLES = 300
+    EXACT_FINALISTS = 30
 
     while len(seen_splits) < QUICK_SPLIT_SAMPLES:
         team_a_set = frozenset(random.sample(lobby, 8))
@@ -76,6 +120,14 @@ def generate_random_teams(players, lobby, player_weights=None):
         if split_key in seen_splits:
             continue
         seen_splits.add(split_key)
+
+        if not _split_has_required_coverage(
+            split_key,
+            role_cache,
+            require_frontline,
+            required_backline_roles,
+        ):
+            continue
 
         if enforce_extreme_rule and (
             _violates_extreme_stack(split_key[0], player_weights)
@@ -94,8 +146,10 @@ def generate_random_teams(players, lobby, player_weights=None):
         )
         quick_candidates.append((quick_score, split_key))
 
-    # A full lobby with feasible extreme rules should always yield candidates,
-    # but fall back to unrestricted splits rather than failing a live draft.
+    # If role overlap or unusual registrations make the strict filters produce
+    # no candidates, fall back to unrestricted splits rather than failing a
+    # live draft. Exact role costs will still strongly prefer proper backline
+    # and at least one Frontline.
     if not quick_candidates:
         enforce_extreme_rule = False
         seen_splits.clear()

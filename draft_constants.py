@@ -1,4 +1,9 @@
 TEAM_FORMATIONS = (
+    ("1 Front / 4 Mid / 3 Back", [
+        "Prot Monk", "Heal Monk", "8 Support",
+        "Frontline",
+        "Midline", "Midline", "Midline", "Midline",
+    ]),
     ("2 Front / 3 Mid / 3 Back", [
         "Prot Monk", "Heal Monk", "8 Support",
         "Frontline", "Frontline",
