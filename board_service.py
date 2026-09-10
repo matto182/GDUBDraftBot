@@ -92,15 +92,24 @@ def build_draft_board_embed(guild_id):
     else:
         waiting_text = "Waiting room is empty."
 
-    description = (
-        "**Before signing up:**\n"
-        "1. Use `/name` to set your in-game name.\n"
-        "2. Use `/role` to pick your roles, in order of priority.\n\n"
-        f"## Lobby — {len(lobby)}/16\n"
-        f"{lobby_text}\n\n"
-        f"## Waiting Room — {len(waiting_room)}\n"
-        f"{waiting_text}"
-    )
+    # Before a draft, show the signup/lobby information. Once a draft is
+    # active or complete, the drafted teams already account for the lobby, so
+    # only keep the waiting room visible above the draft itself.
+    if captain_draft or draft_result:
+        description = (
+            f"## Waiting Room — {len(waiting_room)}\n"
+            f"{waiting_text}"
+        )
+    else:
+        description = (
+            "**Before signing up:**\n"
+            "1. Use `/name` to set your in-game name.\n"
+            "2. Use `/role` to pick your roles, in order of priority.\n\n"
+            f"## Lobby — {len(lobby)}/16\n"
+            f"{lobby_text}\n\n"
+            f"## Waiting Room — {len(waiting_room)}\n"
+            f"{waiting_text}"
+        )
 
     # Votes and captain volunteers are only useful before a draft starts.
     if not captain_draft and not draft_result:
