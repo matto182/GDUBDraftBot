@@ -1,6 +1,23 @@
 import discord
 
 from config import normalize_roles
+import service_runtime as runtime
+
+
+def server_display_name(guild_id, user_id):
+    if not runtime.bot_client:
+        return None
+
+    guild = runtime.bot_client.get_guild(guild_id)
+    if not guild:
+        return None
+
+    member = guild.get_member(user_id)
+    if not member:
+        return None
+
+    return member.nick
+
 
 class CaptainPickSelect(discord.ui.Select):
     def __init__(self, ctx):
@@ -13,9 +30,15 @@ class CaptainPickSelect(discord.ui.Select):
                 p = ctx.players[user_id]
                 roles = ", ".join(normalize_roles(p["roles"]))
 
+                discord_name = server_display_name(ctx.guild_id, user_id)
+                player_label = p["ign"]
+
+                if discord_name:
+                    player_label = f"{player_label} — {discord_name}"
+
                 options.append(
                     discord.SelectOption(
-                        label=p["ign"][:100],
+                        label=player_label[:100],
                         description=roles[:100],
                         value=str(user_id)
                     )

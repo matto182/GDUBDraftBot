@@ -10,6 +10,31 @@ from lobby_state_service import load_lobby_state
 from views import DraftBoardView
 
 
+def server_display_name(guild_id, user_id):
+    if not runtime.bot_client:
+        return None
+
+    guild = runtime.bot_client.get_guild(guild_id)
+    if not guild:
+        return None
+
+    member = guild.get_member(user_id)
+    if not member:
+        return None
+
+    return member.nick
+
+
+def board_player_name(guild_id, user_id, ign):
+    discord_name = server_display_name(guild_id, user_id)
+
+    if not discord_name:
+        return f"**{ign}**"
+
+    safe_discord_name = discord.utils.escape_markdown(discord_name)
+    return f"**{ign}** ({safe_discord_name})"
+
+
 def player_label(guild_id, user_id):
     state = get_state(guild_id)
     captain_draft = state.captain_draft
@@ -49,7 +74,7 @@ def team_text(guild_id, team):
             if user_id == captain_draft.current_picker():
                 prefix += "👉 "
 
-        lines.append(f"{i}. {prefix}**{p['ign']}** — {role}")
+        lines.append(f"{i}. {prefix}{board_player_name(guild_id, user_id, p['ign'])} — {role}")
 
     return "\n".join(lines)
 
@@ -76,7 +101,7 @@ def build_draft_board_embed(guild_id):
             current_roles = normalize_roles(p.get("roles", []))
             roles = ", ".join(current_roles) if current_roles else "No roles set"
 
-            lobby_text += f"{i}. **{p['ign']}** — {roles}\n"
+            lobby_text += f"{i}. {board_player_name(guild_id, user_id, p['ign'])} — {roles}\n"
     else:
         lobby_text = "No players signed up yet."
 
@@ -88,7 +113,7 @@ def build_draft_board_embed(guild_id):
             current_roles = normalize_roles(p.get("roles", []))
             roles = ", ".join(current_roles) if current_roles else "No roles set"
 
-            waiting_text += f"{i}. **{p['ign']}** — {roles}\n"
+            waiting_text += f"{i}. {board_player_name(guild_id, user_id, p['ign'])} — {roles}\n"
     else:
         waiting_text = "Waiting room is empty."
 
