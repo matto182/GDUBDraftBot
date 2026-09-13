@@ -7,6 +7,7 @@ from player_inspector_commands import register_player_inspector_commands
 from draft_history_commands import register_draft_history_commands
 from player_management_commands import register_player_management_commands
 from setup_commands import register_setup_commands
+from trade_commands import register_trade_commands
 
 
 def register_commands(bot):
@@ -18,4 +19,5 @@ def register_commands(bot):
     register_player_management_commands(bot)
     register_player_inspector_commands(bot)
     register_draft_history_commands(bot)
+    register_trade_commands(bot)
     register_setup_commands(bot)
