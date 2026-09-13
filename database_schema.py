@@ -144,5 +144,12 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lobby_full_notification_cooldown (
+            guild_id INTEGER PRIMARY KEY,
+            last_sent_at REAL NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()

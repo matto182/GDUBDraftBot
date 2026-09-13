@@ -80,7 +80,6 @@ def register_admin_commands(bot):
             ("Player13", ["Prot Monk", "Heal Monk"]),
             ("Player14", ["Heal Monk", "Prot Monk"]),
             ("Player15", ["8 Support", "Midline"]),
-            ("Player16", ["Frontline", "Midline"]),
         ]
 
         for i, (ign, roles) in enumerate(test_lobby):
@@ -97,7 +96,7 @@ def register_admin_commands(bot):
         state.last_signup_time = time.time()
         svc.save_lobby_state(guild_id)
 
-        await interaction.response.send_message("Test lobby filled with 16 players.", ephemeral=True)
+        await interaction.response.send_message("Test lobby filled with 15 players. Sign up with a real account to test the 16/16 lobby notification.", ephemeral=True)
         await svc.post_new_draft_board(guild_id)
 
     @bot.tree.command(name="adminboard", description="Open the admin draft controls.")

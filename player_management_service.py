@@ -3,6 +3,7 @@ import time
 from lobby_state_service import save_lobby_state
 from service_runtime import players
 from state import get_state
+from lobby_full_notification_service import queue_lobby_full_notification
 
 
 def _replace_drafted_player(state, outgoing_user_id, incoming_user_id):
@@ -65,6 +66,9 @@ def add_player(guild_id, user_id, location):
 
     state.last_signup_time = time.time()
     save_lobby_state(guild_id)
+
+    if location == "lobby" and len(state.lobby) == 16:
+        queue_lobby_full_notification(guild_id)
 
     return True, f"Added **{player['ign']}** to the **{destination}**."
 
@@ -201,6 +205,9 @@ def move_player(guild_id, user_id, destination):
         return False, "Unknown destination."
 
     save_lobby_state(guild_id)
+
+    if destination == "lobby" and len(state.lobby) == 16:
+        queue_lobby_full_notification(guild_id)
 
     message = f"Moved **{ign}** to the **{destination_label}**."
     if destination == "lobby":

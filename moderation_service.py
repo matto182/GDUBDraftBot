@@ -7,6 +7,7 @@ from state import get_state
 from service_runtime import players
 from lobby_state_service import fill_lobby_from_waiting_room, save_lobby_state
 from board_service import post_new_draft_board
+from lobby_full_notification_service import queue_lobby_full_notification
 
 
 def format_timeout_remaining(expires_at):
@@ -74,6 +75,7 @@ async def timeout_from_draft(
 ):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
+    was_full = len(state.lobby) == 16
 
     if not is_draft_admin(interaction):
         await interaction.response.send_message(
@@ -102,6 +104,9 @@ async def timeout_from_draft(
 
     fill_lobby_from_waiting_room(guild_id)
     save_lobby_state(guild_id)
+
+    if not was_full and len(state.lobby) == 16:
+        queue_lobby_full_notification(guild_id)
 
     ign = players.get(user_id, {}).get("ign", "Unknown player")
     await interaction.response.send_message(

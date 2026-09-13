@@ -41,3 +41,10 @@ from dm_cooldown_repository import (
     player_dm_is_on_cooldown,
     mark_player_dm_sent,
 )
+
+from lobby_full_notification_repository import (
+    LOBBY_FULL_NOTIFICATION_COOLDOWN_SECONDS,
+    get_lobby_full_notification_last_sent,
+    claim_lobby_full_notification,
+    release_lobby_full_notification_claim,
+)

@@ -1,0 +1,20 @@
+GDUB RESTORE VERIFICATION
+
+- weights table: PASS
+- weight getter: PASS
+- owner role DB: PASS
+- owner setup: PASS
+- hidden adjust: PASS
+- hidden debugweights: PASS
+- message content intent: PASS
+- weight optimizer wiring: PASS
+- balance debug: PASS
+- historical backline DB: PASS
+- backline role save: PASS
+- move teams defer: PASS
+- 4h DM cooldown: PASS
+- waiting room visible: PASS
+- dynamic comps: PASS
+- Python syntax: PASS
+- Existing players.db migration: PASS
+- FLEX_ROLES active-code occurrences: 0

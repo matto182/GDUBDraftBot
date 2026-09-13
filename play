@@ -1,0 +1,365 @@
+[1mdiff --git a/bot.py b/bot.py[m
+[1mindex 2397c63..906740e 100644[m
+[1m--- a/bot.py[m
+[1m+++ b/bot.py[m
+[36m@@ -20,6 +20,8 @@[m [mfrom config import ([m
+ )[m
+ [m
+ from database import ([m
+[32m+[m[32m    player_dm_is_on_cooldown,[m
+[32m+[m[32m    mark_player_dm_sent,[m
+     init_db,[m
+     save_player,[m
+     load_players_into,[m
+[36m@@ -1999,43 +2001,50 @@[m [masync def start_captain_draft(interaction: discord.Interaction):[m
+ [m
+     await post_new_draft_board(guild_id)[m
+ async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):[m
+[32m+[m[32m    guild_id = interaction.guild.id[m
+     dm_failed = [][m
+ [m
+     async def notify_team(team, team_name):[m
+         for user_id, assigned_role in team:[m
+[31m-            print(f"Checking DM for {user_id}")[m
+[32m+[m[32m            # Limit successful draft DMs to one per player, per guild, every 4 hours.[m
+[32m+[m[32m            if player_dm_is_on_cooldown(guild_id, user_id):[m
+[32m+[m[32m                print(f"DM cooldown active for {user_id}; skipping")[m
+[32m+[m[32m                continue[m
+ [m
+             member = interaction.guild.get_member(user_id)[m
+ [m
+[31m-            if not member:[m
+[31m-                print(f"Member not found: {user_id}")[m
+[31m-                continue[m
+[31m-[m
+[31m-            print(f"Found member: {member.name}")[m
+[31m-[m
+[31m-            if member.voice:[m
+[31m-                print(f"{member.name} already in voice")[m
+[31m-                continue[m
+[32m+[m[32m            # Only hit Discord's API if the member cache misses.[m
+[32m+[m[32m            if member is None:[m
+[32m+[m[32m                try:[m
+[32m+[m[32m                    member = await interaction.guild.fetch_member(user_id)[m
+[32m+[m[32m                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:[m
+[32m+[m[32m                    print(f"Could not resolve member {user_id}: {error}")[m
+[32m+[m[32m                    if user_id in players:[m
+[32m+[m[32m                        dm_failed.append(players[user_id]["ign"])[m
+[32m+[m[32m                    continue[m
+ [m
+             try:[m
+[31m-                print(f"Sending DM to {member.name}")[m
+[31m-[m
+                 await member.send([m
+[31m-                    f"The draft is ready.\n\n"[m
+[31m-                    f"You were drafted to **Team {team_name}** as **{assigned_role}**.\n"[m
+[31m-                    f"Please join Discord voice when you can."[m
+[32m+[m[32m                    f"Your GvG draft is ready.\n\n"[m
+[32m+[m[32m                    f"Team: **{team_name}**\n"[m
+[32m+[m[32m                    f"Role: **{assigned_role}**\n\n"[m
+[32m+[m[32m                    f"Please join your team voice channel."[m
+                 )[m
+ [m
+[31m-                print(f"DM sent to {member.name}")[m
+[32m+[m[32m                # Failed sends do not start the cooldown.[m
+[32m+[m[32m                mark_player_dm_sent(guild_id, user_id)[m
+[32m+[m[32m                print(f"Draft DM sent to {member.name} ({user_id})")[m
+ [m
+[31m-            except Exception as e:[m
+[31m-                print(f"DM failed for {member.name}: {e}")[m
+[31m-                dm_failed.append(players[user_id]["ign"])[m
+[32m+[m[32m            except (discord.Forbidden, discord.HTTPException) as error:[m
+[32m+[m[32m                print(f"Draft DM failed for {member.name} ({user_id}): {error}")[m
+[32m+[m[32m                if user_id in players:[m
+[32m+[m[32m                    dm_failed.append(players[user_id]["ign"])[m
+ [m
+     await notify_team(team_a, "A")[m
+     await notify_team(team_b, "B")[m
+ [m
+     return dm_failed[m
+[32m+[m
+ async def run_startdraft(interaction: discord.Interaction):[m
+     guild_id = interaction.guild.id[m
+     state = get_state(guild_id)[m
+[36m@@ -2072,7 +2081,8 @@[m [masync def run_startdraft(interaction: discord.Interaction):[m
+ [m
+     state.draft_result = ([m
+         "**Mode:** Random Draft\n\n"[m
+[31m-        "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"[m
+[32m+[m[32m        f"**Team A Comp:** {formation['team_a']}\n"[m
+[32m+[m[32m        f"**Team B Comp:** {formation['team_b']}\n"[m
+         f"**Balancing Score:** {formation['score']} lower is better\n\n"[m
+         "### Team A\n"[m
+         f"{team_text(guild_id, team_a)}\n\n"[m
+[1mdiff --git a/database.py b/database.py[m
+[1mindex 046824e..98c6f77 100644[m
+[1m--- a/database.py[m
+[1m+++ b/database.py[m
+[36m@@ -83,6 +83,16 @@[m [mdef init_db():[m
+         )[m
+     """)[m
+ [m
+[32m+[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        CREATE TABLE IF NOT EXISTS player_dm_cooldown ([m
+[32m+[m[32m            guild_id INTEGER NOT NULL,[m
+[32m+[m[32m            user_id INTEGER NOT NULL,[m
+[32m+[m[32m            last_sent_at REAL NOT NULL,[m
+[32m+[m[32m            PRIMARY KEY (guild_id, user_id)[m
+[32m+[m[32m        )[m
+[32m+[m[32m    """)[m
+[32m+[m
+     conn.commit()[m
+     conn.close()[m
+ [m
+[36m@@ -548,3 +558,39 @@[m [mdef get_active_lobby_bans(guild_id):[m
+         }[m
+         for user_id, banned_by, created_at, expires_at in rows[m
+     ][m
+[32m+[m
+[32m+[m[32mDM_COOLDOWN_SECONDS = 4 * 60 * 60[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_player_dm_last_sent(guild_id, user_id):[m
+[32m+[m[32m    conn = sqlite3.connect(DB_FILE)[m
+[32m+[m[32m    cursor = conn.cursor()[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        SELECT last_sent_at[m
+[32m+[m[32m        FROM player_dm_cooldown[m
+[32m+[m[32m        WHERE guild_id = ? AND user_id = ?[m
+[32m+[m[32m    """, (guild_id, user_id))[m
+[32m+[m[32m    row = cursor.fetchone()[m
+[32m+[m[32m    conn.close()[m
+[32m+[m[32m    return row[0] if row else None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef player_dm_is_on_cooldown(guild_id, user_id, now=None):[m
+[32m+[m[32m    now = time.time() if now is None else now[m
+[32m+[m[32m    last_sent_at = get_player_dm_last_sent(guild_id, user_id)[m
+[32m+[m[32m    return last_sent_at is not None and (now - last_sent_at) < DM_COOLDOWN_SECONDS[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef mark_player_dm_sent(guild_id, user_id, sent_at=None):[m
+[32m+[m[32m    sent_at = time.time() if sent_at is None else sent_at[m
+[32m+[m[32m    conn = sqlite3.connect(DB_FILE)[m
+[32m+[m[32m    cursor = conn.cursor()[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        INSERT INTO player_dm_cooldown (guild_id, user_id, last_sent_at)[m
+[32m+[m[32m        VALUES (?, ?, ?)[m
+[32m+[m[32m        ON CONFLICT(guild_id, user_id) DO UPDATE SET[m
+[32m+[m[32m            last_sent_at = excluded.last_sent_at[m
+[32m+[m[32m    """, (guild_id, user_id, sent_at))[m
+[32m+[m[32m    conn.commit()[m
+[32m+[m[32m    conn.close()[m
+[41m+[m
+[1mdiff --git a/draft_service.py b/draft_service.py[m
+[1mindex 0b746c3..15c5a41 100644[m
+[1m--- a/draft_service.py[m
+[1m+++ b/draft_service.py[m
+[36m@@ -6,6 +6,8 @@[m [mimport discord[m
+ [m
+ from state import get_state[m
+ from database import ([m
+[32m+[m[32m    player_dm_is_on_cooldown,[m
+[32m+[m[32m    mark_player_dm_sent,[m
+     save_player,[m
+     load_players_into,[m
+     save_guild_config,[m
+[36m@@ -874,43 +876,50 @@[m [masync def start_captain_draft(interaction: discord.Interaction):[m
+ [m
+     await post_new_draft_board(guild_id)[m
+ async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):[m
+[32m+[m[32m    guild_id = interaction.guild.id[m
+     dm_failed = [][m
+ [m
+     async def notify_team(team, team_name):[m
+         for user_id, assigned_role in team:[m
+[31m-            print(f"Checking DM for {user_id}")[m
+[31m-[m
+[31m-            member = interaction.guild.get_member(user_id)[m
+[31m-[m
+[31m-            if not member:[m
+[31m-                print(f"Member not found: {user_id}")[m
+[32m+[m[32m            # Limit successful draft DMs to one per player, per guild, every 4 hou[1mdiff --git a/bot.py b/bot.py[m
+[1mindex 2397c63..906740e 100644[m
+[1m--- a/bot.py[m
+[1m+++ b/bot.py[m
+[36m@@ -20,6 +20,8 @@[m [mfrom config import ([m
+ )[m
+ [m
+ from database import ([m
+[32m+[m[32m    player_dm_is_on_cooldown,[m
+[32m+[m[32m    mark_player_dm_sent,[m
+     init_db,[m
+     save_player,[m
+     load_players_into,[m
+[36m@@ -1999,43 +2001,50 @@[m [masync def start_captain_draft(interaction: discord.Interaction):[m
+ [m
+     await post_new_draft_board(guild_id)[m
+ async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):[m
+[32m+[m[32m    guild_id = interaction.guild.id[m
+     dm_failed = [][m
+ [m
+     async def notify_team(team, team_name):[m
+         for user_id, assigned_role in team:[m
+[31m-            print(f"Checking DM for {user_id}")[m
+[32m+[m[32m            # Limit successful draft DMs to one per player, per guild, every 4 hours.[m
+[32m+[m[32m            if player_dm_is_on_cooldown(guild_id, user_id):[m
+[32m+[m[32m                print(f"DM cooldown active for {user_id}; skipping")[m
+[32m+[m[32m                continue[m
+ [m
+             member = interaction.guild.get_member(user_id)[m
+ [m
+[31m-            if not member:[m
+[31m-                print(f"Member not found: {user_id}")[m
+[31m-                continue[m
+[31m-[m
+[31m-            print(f"Found member: {member.name}")[m
+[31m-[m
+[31m-            if member.voice:[m
+[31m-                print(f"{member.name} already in voice")[m
+[31m-                continue[m
+[32m+[m[32m            # Only hit Discord's API if the member cache misses.[m
+[32m+[m[32m            if member is None:[m
+[32m+[m[32m                try:[m
+[32m+[m[32m                    member = await interaction.guild.fetch_member(user_id)[m
+[32m+[m[32m                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:[m
+[32m+[m[32m                    print(f"Could not resolve member {user_id}: {error}")[m
+[32m+[m[32m                    if user_id in players:[m
+[32m+[m[32m                        dm_failed.append(players[user_id]["ign"])[m
+[32m+[m[32m                    continue[m
+ [m
+             try:[m
+[31m-                print(f"Sending DM to {member.name}")[m
+[31m-[m
+                 await member.send([m
+[31m-                    f"The draft is ready.\n\n"[m
+[31m-                    f"You were drafted to **Team {team_name}** as **{assigned_role}**.\n"[m
+[31m-                    f"Please join Discord voice when you can."[m
+[32m+[m[32m                    f"Your GvG draft is ready.\n\n"[m
+[32m+[m[32m                    f"Team: **{team_name}**\n"[m
+[32m+[m[32m                    f"Role: **{assigned_role}**\n\n"[m
+[32m+[m[32m                    f"Please join your team voice channel."[m
+                 )[m
+ [m
+[31m-                print(f"DM sent to {member.name}")[m
+[32m+[m[32m                # Failed sends do not start the cooldown.[m
+[32m+[m[32m                mark_player_dm_sent(guild_id, user_id)[m
+[32m+[m[32m                print(f"Draft DM sent to {member.name} ({user_id})")[m
+ [m
+[31m-            except Exception as e:[m
+[31m-                print(f"DM failed for {member.name}: {e}")[m
+[31m-                dm_failed.append(players[user_id]["ign"])[m
+[32m+[m[32m            except (discord.Forbidden, discord.HTTPException) as error:[m
+[32m+[m[32m                print(f"Draft DM failed for {member.name} ({user_id}): {error}")[m
+[32m+[m[32m                if user_id in players:[m
+[32m+[m[32m                    dm_failed.append(players[user_id]["ign"])[m
+ [m
+     await notify_team(team_a, "A")[m
+     await notify_team(team_b, "B")[m
+ [m
+     return dm_failed[m
+[32m+[m
+ async def run_startdraft(interaction: discord.Interaction):[m
+     guild_id = interaction.guild.id[m
+     state = get_state(guild_id)[m
+[36m@@ -2072,7 +2081,8 @@[m [masync def run_startdraft(interaction: discord.Interaction):[m
+ [m
+     state.draft_result = ([m
+         "**Mode:** Random Draft\n\n"[m
+[31m-        "**Target Comp:** 2 Frontline / 1 Flex / 2 Midline / Prot / Heal / Support\n"[m
+[32m+[m[32m        f"**Team A Comp:** {formation['team_a']}\n"[m
+[32m+[m[32m        f"**Team B Comp:** {formation['team_b']}\n"[m
+         f"**Balancing Score:** {formation['score']} lower is better\n\n"[m
+         "### Team A\n"[m
+         f"{team_text(guild_id, team_a)}\n\n"[m
+[1mdiff --git a/database.py b/database.py[m
+[1mindex 046824e..98c6f77 100644[m
+[1m--- a/database.py[m
+[1m+++ b/database.py[m
+[36m@@ -83,6 +83,16 @@[m [mdef init_db():[m
+         )[m
+     """)[m
+ [m
+[32m+[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        CREATE TABLE IF NOT EXISTS player_dm_cooldown ([m
+[32m+[m[32m            guild_id INTEGER NOT NULL,[m
+[32m+[m[32m            user_id INTEGER NOT NULL,[m
+[32m+[m[32m            last_sent_at REAL NOT NULL,[m
+[32m+[m[32m            PRIMARY KEY (guild_id, user_id)[m
+[32m+[m[32m        )[m
+[32m+[m[32m    """)[m
+[32m+[m
+     conn.commit()[m
+     conn.close()[m
+ [m
+[36m@@ -548,3 +558,39 @@[m [mdef get_active_lobby_bans(guild_id):[m
+         }[m
+         for user_id, banned_by, created_at, expires_at in rows[m
+     ][m
+[32m+[m
+[32m+[m[32mDM_COOLDOWN_SECONDS = 4 * 60 * 60[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef get_player_dm_last_sent(guild_id, user_id):[m
+[32m+[m[32m    conn = sqlite3.connect(DB_FILE)[m
+[32m+[m[32m    cursor = conn.cursor()[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        SELECT last_sent_at[m
+[32m+[m[32m        FROM player_dm_cooldown[m
+[32m+[m[32m        WHERE guild_id = ? AND user_id = ?[m
+[32m+[m[32m    """, (guild_id, user_id))[m
+[32m+[m[32m    row = cursor.fetchone()[m
+[32m+[m[32m    conn.close()[m
+[32m+[m[32m    return row[0] if row else None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef player_dm_is_on_cooldown(guild_id, user_id, now=None):[m
+[32m+[m[32m    now = time.time() if now is None else now[m
+[32m+[m[32m    last_sent_at = get_player_dm_last_sent(guild_id, user_id)[m
+[32m+[m[32m    return last_sent_at is not None and (now - last_sent_at) < DM_COOLDOWN_SECONDS[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef mark_player_dm_sent(guild_id, user_id, sent_at=None):[m
+[32m+[m[32m    sent_at = time.time() if sent_at is None else sent_at[m
+[32m+[m[32m    conn = sqlite3.connect(DB_FILE)[m
+[32m+[m[32m    cursor = conn.cursor()[m
+[32m+[m[32m    cursor.execute("""[m
+[32m+[m[32m        INSERT INTO player_dm_cooldown (guild_id, user_id, last_sent_at)[m
+[32m+[m[32m        VALUES (?, ?, ?)[m
+[32m+[m[32m        ON CONFLICT(guild_id, user_id) DO UPDATE SET[m
+[32m+[m[32m            last_sent_at = excluded.last_sent_at[m
+[32m+[m[32m    """, (guild_id, user_id, sent_at))[m
+[32m+[m[32m    conn.commit()[m
+[32m+[m[32m    conn.close()[m
+[41m+[m
+[1mdiff --git a/draft_service.py b/draft_service.py[m
+[1mindex 0b746c3..15c5a41 100644[m
+[1m--- a/draft_service.py[m
+[1m+++ b/draft_service.py[m
+[36m@@ -6,6 +6,8 @@[m [mimport discord[m
+ [m
+ from state import get_state[m
+ from database import ([m
+[32m+[m[32m    player_dm_is_on_cooldown,[m
+[32m+[m[32m    mark_player_dm_sent,[m
+     save_player,[m
+     load_players_into,[m
+     save_guild_config,[m
+[36m@@ -874,43 +876,50 @@[m [masync def start_captain_draft(interaction: discord.Interaction):[m
+ [m
+     await post_new_draft_board(guild_id)[m
+ async def notify_drafted_players(interaction: discord.Interaction, team_a, team_b):[m
+[32m+[m[32m    guild_id = interaction.guild.id[m
+     dm_failed = [][m
+ [m
+     async def notify_team(team, team_name):[m
+         for user_id, assigned_role in team:[m
+[31m-            print(f"Checking DM for {user_id}")[m
+[31m-[m
+[31m-            member = interaction.guild.get_member(user_id)[m
+[31m-[m
+[31m-            if not member:[m
+[31m-                print(f"Member not found: {user_id}")[m
+[32m+[m[32m            # Limit successful draft DMs to one per player, per guild, every 4 hou
