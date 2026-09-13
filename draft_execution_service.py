@@ -57,6 +57,13 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
             "### Team B\n"
             f"{team_text(guild_id, state.final_team_b)}"
         )
+        # Clear the active Captain Draft before refreshing the board so the
+        # completed Team A / Team B view is visible before assignment DMs send.
+        state.captain_draft = None
+
+        await interaction.response.defer()
+        await post_new_draft_board(guild_id)
+
         dm_failed = await notify_drafted_players(
             interaction,
             state.final_team_a,
@@ -68,7 +75,7 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
                 "Could not DM:\n" + "\n".join(dm_failed)
             )
 
-        state.captain_draft = None
+        return
 
     await interaction.response.defer()
 
@@ -79,7 +86,7 @@ async def handle_captain_pick(interaction: discord.Interaction, picked_id: int):
                 f"{player_label(guild_id, next_picker)}, you are on the clock. Click **Pick Player** on the draft board."
             )
 
-    await post_new_draft_board(guild_id)    
+    await post_new_draft_board(guild_id)
 
 async def start_captain_draft(interaction: discord.Interaction):
     guild_id = interaction.guild.id
@@ -194,6 +201,9 @@ async def run_startdraft(interaction: discord.Interaction):
         "### Team B\n"
         f"{team_text(guild_id, team_b)}"
     )
+    # Publish the completed draft board before sending assignment DMs.
+    await post_new_draft_board(guild_id)
+
     dm_failed = await notify_drafted_players(interaction, team_a, team_b)
 
     msg = "Draft started."
@@ -202,6 +212,4 @@ async def run_startdraft(interaction: discord.Interaction):
         msg += "\n\nCould not DM:\n" + "\n".join(dm_failed)
 
     await interaction.followup.send(msg, ephemeral=True)
-
-    await post_new_draft_board(guild_id)
 
