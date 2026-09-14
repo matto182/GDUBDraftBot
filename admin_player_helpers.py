@@ -42,41 +42,43 @@ def _discord_member_names(guild, user_id):
     return names
 
 
-def admin_player_identity_text(guild, user_id):
-    """Compact Discord identity text for admin-facing player pickers."""
+def admin_player_identity_text(guild, user_id, ign=None):
+    """Compact Discord identity text without repeating the IGN."""
     member = guild.get_member(user_id)
     if not member:
         return ""
 
+    ign_cf = ign.casefold() if ign else None
     parts = []
+    seen = set()
 
-    if member.nick:
-        parts.append(member.nick)
-
-    username = getattr(member, "name", None)
-    if username and (
-        not member.nick
-        or username.casefold() != member.nick.casefold()
+    for value, prefix in (
+        (member.nick, ""),
+        (getattr(member, "name", None), "@"),
+        (getattr(member, "display_name", None), ""),
     ):
-        parts.append(f"@{username}")
+        if not value:
+            continue
 
-    if not parts:
-        display_name = getattr(member, "display_name", None)
-        if display_name:
-            parts.append(display_name)
+        clean = str(value).strip()
+        clean_cf = clean.casefold()
+
+        if ign_cf and clean_cf == ign_cf:
+            continue
+        if clean_cf in seen:
+            continue
+
+        parts.append(f"{prefix}{clean}")
+        seen.add(clean_cf)
 
     return " | ".join(parts)
 
 
 def admin_player_choice_label(guild, user_id, ign):
-    """Autocomplete label: IGN plus Discord identity when useful."""
-    identity = admin_player_identity_text(guild, user_id)
+    """Autocomplete label: IGN plus non-duplicate Discord identity."""
+    identity = admin_player_identity_text(guild, user_id, ign)
 
     if not identity:
-        return ign[:100]
-
-    identity_cf = identity.replace("@", "").casefold()
-    if identity_cf == ign.casefold():
         return ign[:100]
 
     return f"{ign} — {identity}"[:100]
@@ -115,6 +117,36 @@ def _player_matches_admin_search(guild, user_id, data, current):
         for value in values
         if value
     )
+
+
+def find_registered_player_matches(guild, query, excluded_ids=None):
+    """Find registered guild members by partial IGN/nickname/username match."""
+    excluded_ids = set(excluded_ids or [])
+    guild_member_ids = {member.id for member in guild.members}
+    matches = []
+
+    for user_id, data in svc.players.items():
+        ign = data.get("ign")
+        if (
+            not ign
+            or user_id not in guild_member_ids
+            or user_id in excluded_ids
+        ):
+            continue
+
+        if not _player_matches_admin_search(guild, user_id, data, query):
+            continue
+
+        is_exact = _player_matches_admin_value(
+            guild,
+            user_id,
+            data,
+            query,
+        )
+        matches.append((not is_exact, ign.casefold(), user_id))
+
+    matches.sort()
+    return [user_id for _not_exact, _ign, user_id in matches]
 
 
 def _find_admin_player(interaction: discord.Interaction, value: str):

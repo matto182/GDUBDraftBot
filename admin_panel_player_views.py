@@ -3,7 +3,12 @@ import discord
 import draft_service as svc
 import player_management_service as player_management
 from state import get_state
-from admin_player_helpers import admin_player_identity_text
+from admin_player_helpers import (
+    _player_matches_admin_value,
+    admin_player_choice_label,
+    admin_player_identity_text,
+    find_registered_player_matches,
+)
 
 
 def _player_name(user_id):
@@ -65,7 +70,11 @@ class AddPlayerSelect(discord.ui.Select):
         )
 
         def discord_identity(user_id):
-            return admin_player_identity_text(guild, user_id) or "Discord identity unavailable"
+            ign = _player_name(user_id)
+            return (
+                admin_player_identity_text(guild, user_id, ign)
+                or "Discord identity matches IGN"
+            )
 
         super().__init__(
             placeholder="Choose a registered player to add",
@@ -99,6 +108,123 @@ class AddPlayerView(discord.ui.View):
     def __init__(self, guild):
         super().__init__(timeout=300)
         self.add_item(AddPlayerSelect(guild))
+
+
+class AddPlayerSearchResultSelect(discord.ui.Select):
+    def __init__(self, guild, user_ids):
+        options = []
+
+        for user_id in list(user_ids)[:25]:
+            ign = _player_name(user_id)
+            options.append(
+                discord.SelectOption(
+                    label=admin_player_choice_label(guild, user_id, ign),
+                    value=str(user_id),
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose the player you meant",
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        user_id = int(self.values[0])
+
+        await interaction.response.send_message(
+            f"Where should **{_player_name(user_id)}** be added?",
+            view=AddPlayerDestinationView(user_id),
+            ephemeral=True,
+        )
+
+
+class AddPlayerSearchResultsView(discord.ui.View):
+    def __init__(self, guild, user_ids):
+        super().__init__(timeout=300)
+        self.add_item(AddPlayerSearchResultSelect(guild, user_ids))
+
+
+class AddPlayerSearchModal(discord.ui.Modal, title="Add Player"):
+    player_search = discord.ui.TextInput(
+        label="Find player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        query = str(self.player_search.value).strip()
+
+        if not query:
+            await interaction.response.send_message(
+                "Enter an IGN, Discord nickname, or username.",
+                ephemeral=True,
+            )
+            return
+
+        state = get_state(interaction.guild.id)
+        excluded_ids = set(state.lobby) | set(state.waiting_room)
+
+        matches = find_registered_player_matches(
+            interaction.guild,
+            query,
+            excluded_ids=excluded_ids,
+        )
+
+        if not matches:
+            await interaction.response.send_message(
+                f"No unsigned registered player matched **{query}**.",
+                ephemeral=True,
+            )
+            return
+
+        exact_matches = [
+            user_id
+            for user_id in matches
+            if _player_matches_admin_value(
+                interaction.guild,
+                user_id,
+                svc.players[user_id],
+                query,
+            )
+        ]
+
+        if len(exact_matches) == 1:
+            selected_user_id = exact_matches[0]
+        elif len(matches) == 1:
+            selected_user_id = matches[0]
+        else:
+            showing = matches[:25]
+            extra_note = ""
+
+            if len(matches) > 25:
+                extra_note = (
+                    f" Showing the first **25** of **{len(matches)}** matches; "
+                    "search more specifically to narrow it down."
+                )
+
+            await interaction.response.send_message(
+                f"Found **{len(matches)}** matches for **{query}**."
+                f"{extra_note}",
+                view=AddPlayerSearchResultsView(
+                    interaction.guild,
+                    showing,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"Where should **{_player_name(selected_user_id)}** be added?",
+            view=AddPlayerDestinationView(selected_user_id),
+            ephemeral=True,
+        )
 
 
 class AddPlayerDestinationView(discord.ui.View):

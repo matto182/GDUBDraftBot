@@ -11,7 +11,7 @@ from admin_panel_moderation_views import (
     build_active_timeouts_embed,
 )
 from admin_panel_player_views import (
-    AddPlayerView,
+    AddPlayerSearchModal,
     KickPlayerView,
     MovePlayerView,
     QueuePlayerView,
@@ -98,10 +98,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose a registered player to add:",
-            view=AddPlayerView(interaction.guild),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            AddPlayerSearchModal()
         )
 
     @discord.ui.button(label="Kick Player", style=discord.ButtonStyle.secondary, row=0)
