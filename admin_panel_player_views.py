@@ -3,6 +3,7 @@ import discord
 import draft_service as svc
 import player_management_service as player_management
 from state import get_state
+from admin_player_helpers import admin_player_identity_text
 
 
 def _player_name(user_id):
@@ -63,11 +64,15 @@ class AddPlayerSelect(discord.ui.Select):
             key=lambda user_id: _player_name(user_id).casefold(),
         )
 
+        def discord_identity(user_id):
+            return admin_player_identity_text(guild, user_id) or "Discord identity unavailable"
+
         super().__init__(
             placeholder="Choose a registered player to add",
             options=_build_options(
                 available,
                 "No unsigned registered players",
+                discord_identity,
             ),
         )
 

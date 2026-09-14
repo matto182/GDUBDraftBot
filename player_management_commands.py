@@ -23,7 +23,7 @@ async def _send_action_result(interaction, success, message):
 
 def register_player_management_commands(bot):
     @bot.tree.command(name="addplayer", description="Manually add a registered player to the draft.")
-    @app_commands.describe(player="Player IGN", location="Where to add the player")
+    @app_commands.describe(player="IGN, Discord nickname, or username", location="Where to add the player")
     @app_commands.choices(location=[
         app_commands.Choice(name="Lobby", value="lobby"),
         app_commands.Choice(name="Waiting Room", value="waiting"),
@@ -45,7 +45,7 @@ def register_player_management_commands(bot):
 
         if user_id is None:
             await interaction.response.send_message(
-                f"No registered player in this server found for **{player}**.",
+                f"No unique registered player in this server found for **{player}**.",
                 ephemeral=True,
             )
             return
