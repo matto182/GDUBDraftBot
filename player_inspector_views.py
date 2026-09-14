@@ -54,8 +54,31 @@ def _timeout_control_state(snapshot):
     }
 
 
+def _role_preferences_text(snapshot):
+    roles = snapshot.get("roles", [])
+    if not roles:
+        return "No roles set."
+
+    return "\n".join(
+        f"**{index}.** {role}"
+        for index, role in enumerate(roles, start=1)
+    )
+
+
+def _discord_identity_text(snapshot):
+    display_name = snapshot.get("discord_name") or "Unknown"
+    username = snapshot.get("discord_username")
+
+    if not username:
+        return display_name
+
+    if username.casefold() == display_name.casefold():
+        return display_name
+
+    return f"{display_name} (@{username})"
+
+
 def build_player_inspector_embed(snapshot):
-    roles = ", ".join(snapshot["roles"]) if snapshot["roles"] else "None"
     aliases = snapshot.get("aliases", [])
     aliases_text = ", ".join(aliases) if aliases else "None"
     weight = snapshot["hidden_weight"]
@@ -63,18 +86,25 @@ def build_player_inspector_embed(snapshot):
 
     embed = discord.Embed(
         title=f"Player Inspector — {snapshot['ign']}",
-        description=f"<@{snapshot['user_id']}> • `{snapshot['user_id']}`",
+        description=(
+            f"**Discord:** {_discord_identity_text(snapshot)}\n"
+            f"**Discord ID:** `{snapshot['user_id']}`\n"
+            f"**Current status:** {snapshot['current_status']}"
+        ),
     )
 
     embed.add_field(
         name="Registration",
         value=(
-            f"**Discord:** {snapshot['discord_name']}\n"
-            f"**Previous IGNs:** {aliases_text}\n"
-            f"**Roles:** {roles}\n"
-            f"**Backline history:** "
-            f"{'Yes' if snapshot['has_played_backline'] else 'No'}"
+            f"**Current IGN:** {snapshot['ign']}\n"
+            f"**Previous IGNs:** {aliases_text}"
         ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Role Preferences",
+        value=_role_preferences_text(snapshot),
         inline=False,
     )
 
@@ -82,6 +112,8 @@ def build_player_inspector_embed(snapshot):
         name="Admin / Balance",
         value=(
             f"**Hidden weight:** {weight_text}\n"
+            f"**Has played backline:** "
+            f"{'Yes' if snapshot['has_played_backline'] else 'No'}\n"
             f"**Lobby timeout:** {snapshot['timeout_summary']}"
         ),
         inline=False,
@@ -91,6 +123,8 @@ def build_player_inspector_embed(snapshot):
         name="Draft Stats",
         value=(
             f"**Drafts played:** {snapshot['drafts_played']}\n"
+            f"**Team A:** {snapshot['team_a_assignments']}\n"
+            f"**Team B:** {snapshot['team_b_assignments']}\n"
             f"**Captain:** {snapshot['times_captain']} "
             f"({snapshot['captain_rate']}%)\n"
             f"**Primary preference:** {snapshot['primary_assignments']} "
@@ -116,6 +150,7 @@ def build_player_inspector_embed(snapshot):
 
     embed.set_footer(text="Admin-only player information")
     return embed
+
 
 
 class PlayerInspectorView(discord.ui.View):

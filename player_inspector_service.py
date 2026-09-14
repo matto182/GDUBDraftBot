@@ -1,6 +1,8 @@
 import time
 
 from config import normalize_roles
+from state import get_state
+import service_runtime as runtime
 import player_inspector_repository as repository
 
 
@@ -42,6 +44,78 @@ def search_player_choices(query, limit=25, db_file=None):
 
 def resolve_player(identifier, db_file=None):
     return repository.find_player(identifier, db_file=db_file)
+
+
+def _live_discord_identity(guild_id, user_id, fallback_name):
+    display_name = fallback_name
+    username = None
+
+    if runtime.bot_client:
+        guild = runtime.bot_client.get_guild(guild_id)
+        if guild:
+            member = guild.get_member(user_id)
+            if member:
+                display_name = member.display_name
+                username = member.name
+
+    return display_name, username
+
+
+def _team_assignment(team, user_id):
+    for entry in team or []:
+        try:
+            drafted_user_id, assigned_role = entry
+        except (TypeError, ValueError):
+            continue
+
+        if drafted_user_id == user_id:
+            return assigned_role
+
+    return None
+
+
+def _current_status(guild_id, user_id):
+    state = get_state(guild_id)
+
+    captain_draft = getattr(state, "captain_draft", None)
+    if captain_draft:
+        role = _team_assignment(
+            getattr(captain_draft, "team_a", []),
+            user_id,
+        )
+        if role is not None:
+            return f"Captain Draft • Team A — {role}"
+
+        role = _team_assignment(
+            getattr(captain_draft, "team_b", []),
+            user_id,
+        )
+        if role is not None:
+            return f"Captain Draft • Team B — {role}"
+
+    role = _team_assignment(
+        getattr(state, "final_team_a", []),
+        user_id,
+    )
+    if role is not None:
+        return f"Team A — {role}"
+
+    role = _team_assignment(
+        getattr(state, "final_team_b", []),
+        user_id,
+    )
+    if role is not None:
+        return f"Team B — {role}"
+
+    waiting_room = list(getattr(state, "waiting_room", []))
+    if user_id in waiting_room:
+        return f"Waiting Room #{waiting_room.index(user_id) + 1}"
+
+    lobby = list(getattr(state, "lobby", []))
+    if user_id in lobby:
+        return f"Lobby #{lobby.index(user_id) + 1}"
+
+    return "Not signed up"
 
 
 def build_player_snapshot(guild_id, user_id, now=None, db_file=None):
@@ -87,9 +161,17 @@ def build_player_snapshot(guild_id, user_id, now=None, db_file=None):
     if timeout:
         timeout_summary = _format_remaining(timeout["expires_at"], now=now)
 
+    discord_display_name, discord_username = _live_discord_identity(
+        guild_id,
+        user_id,
+        player["discord_name"],
+    )
+    current_status = _current_status(guild_id, user_id)
+
     return {
         "user_id": user_id,
-        "discord_name": player["discord_name"],
+        "discord_name": discord_display_name,
+        "discord_username": discord_username,
         "ign": player["ign"],
         "aliases": aliases,
         "roles": roles,
@@ -97,7 +179,10 @@ def build_player_snapshot(guild_id, user_id, now=None, db_file=None):
         "hidden_weight": weight,
         "timeout": timeout,
         "timeout_summary": timeout_summary,
+        "current_status": current_status,
         "drafts_played": drafts_played,
+        "team_a_assignments": stats["team_a_assignments"],
+        "team_b_assignments": stats["team_b_assignments"],
         "times_captain": stats["times_captain"],
         "captain_rate": _percentage(stats["times_captain"], drafts_played),
         "primary_assignments": stats["primary_assignments"],

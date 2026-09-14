@@ -221,6 +221,18 @@ def get_draft_stats(guild_id, user_id, db_file=None):
         """
         SELECT
             COUNT(*),
+            COALESCE(SUM(
+                CASE
+                    WHEN UPPER(TRIM(COALESCE(dp.team, ''))) IN ('A', 'TEAM A')
+                    THEN 1 ELSE 0
+                END
+            ), 0),
+            COALESCE(SUM(
+                CASE
+                    WHEN UPPER(TRIM(COALESCE(dp.team, ''))) IN ('B', 'TEAM B')
+                    THEN 1 ELSE 0
+                END
+            ), 0),
             COALESCE(SUM(CASE WHEN dp.was_captain = 1 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN dp.role_priority_index = 1 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN dp.role_priority_index = 999 THEN 1 ELSE 0 END), 0),
@@ -237,10 +249,12 @@ def get_draft_stats(guild_id, user_id, db_file=None):
 
     return {
         "drafts_played": row[0] or 0,
-        "times_captain": row[1] or 0,
-        "primary_assignments": row[2] or 0,
-        "off_role_assignments": row[3] or 0,
-        "last_draft_at": row[4],
+        "team_a_assignments": row[1] or 0,
+        "team_b_assignments": row[2] or 0,
+        "times_captain": row[3] or 0,
+        "primary_assignments": row[4] or 0,
+        "off_role_assignments": row[5] or 0,
+        "last_draft_at": row[6],
     }
 
 
