@@ -22,7 +22,9 @@ def server_display_name(guild_id, user_id):
     if not member:
         return None
 
-    return member.nick
+    # Use the server nickname when present, otherwise Discord's normal
+    # display name. This keeps the board consistent for every member.
+    return member.display_name
 
 
 def board_player_name(guild_id, user_id, ign):
@@ -31,8 +33,25 @@ def board_player_name(guild_id, user_id, ign):
     if not discord_name:
         return f"**{ign}**"
 
-    safe_discord_name = discord.utils.escape_markdown(discord_name)
-    return f"**{ign}** ({safe_discord_name})"
+    clean_ign = ign.strip()
+    clean_discord_name = discord_name.strip()
+
+    # Avoid pointless duplicates such as "Supreme Bot (Supreme Bot)".
+    if clean_discord_name.casefold() == clean_ign.casefold():
+        return f"**{clean_ign}**"
+
+    # Avoid nested duplicates such as "Ixxxl (Ixxxl (Tony))".
+    ign_prefix = f"{clean_ign} ("
+    if (
+        clean_discord_name.casefold().startswith(ign_prefix.casefold())
+        and clean_discord_name.endswith(")")
+    ):
+        suffix = clean_discord_name[len(clean_ign):].strip()
+        safe_suffix = discord.utils.escape_markdown(suffix)
+        return f"**{clean_ign}** {safe_suffix}"
+
+    safe_discord_name = discord.utils.escape_markdown(clean_discord_name)
+    return f"**{clean_ign}** ({safe_discord_name})"
 
 
 def player_label(guild_id, user_id):
