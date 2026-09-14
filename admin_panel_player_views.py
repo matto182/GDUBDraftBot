@@ -8,6 +8,7 @@ from admin_player_helpers import (
     admin_player_choice_label,
     admin_player_identity_text,
     find_registered_player_matches,
+    resolve_player_search,
 )
 
 
@@ -250,6 +251,365 @@ class AddPlayerDestinationView(discord.ui.View):
     @discord.ui.button(label="Waiting Room", style=discord.ButtonStyle.secondary)
     async def waiting_button(self, interaction, button):
         await self._add(interaction, "waiting")
+
+
+def _search_result_options(guild, user_ids):
+    options = []
+
+    for user_id in list(user_ids)[:25]:
+        ign = _player_name(user_id)
+        options.append(
+            discord.SelectOption(
+                label=admin_player_choice_label(guild, user_id, ign),
+                value=str(user_id),
+            )
+        )
+
+    return options
+
+
+def _match_summary(guild, user_ids, limit=10):
+    labels = [
+        admin_player_choice_label(
+            guild,
+            user_id,
+            _player_name(user_id),
+        )
+        for user_id in list(user_ids)[:limit]
+    ]
+
+    return "\n".join(f"• {label}" for label in labels)
+
+
+class KickPlayerSearchResultSelect(discord.ui.Select):
+    def __init__(self, guild, user_ids):
+        super().__init__(
+            placeholder="Choose the player to kick",
+            options=_search_result_options(guild, user_ids),
+        )
+
+    async def callback(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        await svc.kick_from_draft(
+            interaction,
+            int(self.values[0]),
+        )
+
+
+class KickPlayerSearchResultsView(discord.ui.View):
+    def __init__(self, guild, user_ids):
+        super().__init__(timeout=300)
+        self.add_item(KickPlayerSearchResultSelect(guild, user_ids))
+
+
+class KickPlayerSearchModal(discord.ui.Modal, title="Kick Player"):
+    player_search = discord.ui.TextInput(
+        label="Find signed player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        state = get_state(interaction.guild.id)
+        candidate_ids = list(state.lobby) + list(state.waiting_room)
+        query = str(self.player_search.value).strip()
+
+        selected_user_id, matches = resolve_player_search(
+            interaction.guild,
+            query,
+            candidate_ids,
+        )
+
+        if selected_user_id is not None:
+            await svc.kick_from_draft(interaction, selected_user_id)
+            return
+
+        if not matches:
+            await interaction.response.send_message(
+                f"No signed player matched **{query}**.",
+                ephemeral=True,
+            )
+            return
+
+        showing = matches[:25]
+        note = ""
+        if len(matches) > 25:
+            note = (
+                f" Showing the first **25** of **{len(matches)}** matches; "
+                "search more specifically if needed."
+            )
+
+        await interaction.response.send_message(
+            f"Found **{len(matches)}** matches for **{query}**.{note}",
+            view=KickPlayerSearchResultsView(
+                interaction.guild,
+                showing,
+            ),
+            ephemeral=True,
+        )
+
+
+class MovePlayerSearchResultSelect(discord.ui.Select):
+    def __init__(self, guild, user_ids):
+        super().__init__(
+            placeholder="Choose the player to move",
+            options=_search_result_options(guild, user_ids),
+        )
+
+    async def callback(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        success, message = player_management.move_player_to_other_area(
+            interaction.guild.id,
+            int(self.values[0]),
+        )
+        await _send_result(interaction, success, message)
+
+
+class MovePlayerSearchResultsView(discord.ui.View):
+    def __init__(self, guild, user_ids):
+        super().__init__(timeout=300)
+        self.add_item(MovePlayerSearchResultSelect(guild, user_ids))
+
+
+class MovePlayerSearchModal(discord.ui.Modal, title="Move Player"):
+    player_search = discord.ui.TextInput(
+        label="Find signed player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        state = get_state(interaction.guild.id)
+        candidate_ids = list(state.lobby) + list(state.waiting_room)
+        query = str(self.player_search.value).strip()
+
+        selected_user_id, matches = resolve_player_search(
+            interaction.guild,
+            query,
+            candidate_ids,
+        )
+
+        if selected_user_id is not None:
+            success, message = player_management.move_player_to_other_area(
+                interaction.guild.id,
+                selected_user_id,
+            )
+            await _send_result(interaction, success, message)
+            return
+
+        if not matches:
+            await interaction.response.send_message(
+                f"No signed player matched **{query}**.",
+                ephemeral=True,
+            )
+            return
+
+        showing = matches[:25]
+        note = ""
+        if len(matches) > 25:
+            note = (
+                f" Showing the first **25** of **{len(matches)}** matches; "
+                "search more specifically if needed."
+            )
+
+        await interaction.response.send_message(
+            f"Found **{len(matches)}** matches for **{query}**.{note}",
+            view=MovePlayerSearchResultsView(
+                interaction.guild,
+                showing,
+            ),
+            ephemeral=True,
+        )
+
+
+class SwapPlayersSearchModal(discord.ui.Modal, title="Swap Players"):
+    lobby_player = discord.ui.TextInput(
+        label="Lobby player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+    waiting_player = discord.ui.TextInput(
+        label="Waiting-room player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        state = get_state(interaction.guild.id)
+
+        lobby_query = str(self.lobby_player.value).strip()
+        waiting_query = str(self.waiting_player.value).strip()
+
+        lobby_user_id, lobby_matches = resolve_player_search(
+            interaction.guild,
+            lobby_query,
+            state.lobby,
+        )
+        waiting_user_id, waiting_matches = resolve_player_search(
+            interaction.guild,
+            waiting_query,
+            state.waiting_room,
+        )
+
+        problems = []
+
+        if lobby_user_id is None:
+            if not lobby_matches:
+                problems.append(
+                    f"No lobby player matched **{lobby_query}**."
+                )
+            else:
+                problems.append(
+                    f"Lobby search **{lobby_query}** matched multiple players:\n"
+                    f"{_match_summary(interaction.guild, lobby_matches)}"
+                )
+
+        if waiting_user_id is None:
+            if not waiting_matches:
+                problems.append(
+                    f"No waiting-room player matched **{waiting_query}**."
+                )
+            else:
+                problems.append(
+                    f"Waiting-room search **{waiting_query}** matched multiple players:\n"
+                    f"{_match_summary(interaction.guild, waiting_matches)}"
+                )
+
+        if problems:
+            await interaction.response.send_message(
+                "\n\n".join(problems)
+                + "\n\nRun **Swap Players** again with a more specific search.",
+                ephemeral=True,
+            )
+            return
+
+        success, message = player_management.swap_players(
+            interaction.guild.id,
+            lobby_user_id,
+            waiting_user_id,
+        )
+        await _send_result(interaction, success, message)
+
+
+class QueuePlayerSearchResultSelect(discord.ui.Select):
+    def __init__(self, guild, user_ids, position):
+        self.position = position
+
+        super().__init__(
+            placeholder="Choose the waiting-room player",
+            options=_search_result_options(guild, user_ids),
+        )
+
+    async def callback(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        success, message = player_management.set_queue_position(
+            interaction.guild.id,
+            int(self.values[0]),
+            self.position,
+        )
+        await _send_result(interaction, success, message)
+
+
+class QueuePlayerSearchResultsView(discord.ui.View):
+    def __init__(self, guild, user_ids, position):
+        super().__init__(timeout=300)
+        self.add_item(
+            QueuePlayerSearchResultSelect(
+                guild,
+                user_ids,
+                position,
+            )
+        )
+
+
+class QueuePlayerSearchModal(discord.ui.Modal, title="Set Queue Position"):
+    player_search = discord.ui.TextInput(
+        label="Find waiting-room player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+    position = discord.ui.TextInput(
+        label="New queue position",
+        placeholder="1",
+        required=True,
+        max_length=3,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        try:
+            position = int(str(self.position.value).strip())
+        except ValueError:
+            await interaction.response.send_message(
+                "Queue position must be a whole number.",
+                ephemeral=True,
+            )
+            return
+
+        state = get_state(interaction.guild.id)
+        query = str(self.player_search.value).strip()
+
+        selected_user_id, matches = resolve_player_search(
+            interaction.guild,
+            query,
+            state.waiting_room,
+        )
+
+        if selected_user_id is not None:
+            success, message = player_management.set_queue_position(
+                interaction.guild.id,
+                selected_user_id,
+                position,
+            )
+            await _send_result(interaction, success, message)
+            return
+
+        if not matches:
+            await interaction.response.send_message(
+                f"No waiting-room player matched **{query}**.",
+                ephemeral=True,
+            )
+            return
+
+        showing = matches[:25]
+        note = ""
+        if len(matches) > 25:
+            note = (
+                f" Showing the first **25** of **{len(matches)}** matches; "
+                "search more specifically if needed."
+            )
+
+        await interaction.response.send_message(
+            f"Found **{len(matches)}** matches for **{query}**.{note}",
+            view=QueuePlayerSearchResultsView(
+                interaction.guild,
+                showing,
+                position,
+            ),
+            ephemeral=True,
+        )
 
 
 class KickPlayerSelect(discord.ui.Select):

@@ -7,15 +7,15 @@ import draft_service as svc
 from admin_panel_draft_views import ResetDraftConfirmView, WipeLobbyConfirmView
 from admin_panel_moderation_views import (
     ActiveTimeoutsView,
-    TimeoutPlayerView,
+    TimeoutPlayerSearchModal,
     build_active_timeouts_embed,
 )
 from admin_panel_player_views import (
     AddPlayerSearchModal,
-    KickPlayerView,
-    MovePlayerView,
-    QueuePlayerView,
-    SwapPlayersView,
+    KickPlayerSearchModal,
+    MovePlayerSearchModal,
+    QueuePlayerSearchModal,
+    SwapPlayersSearchModal,
 )
 
 
@@ -107,10 +107,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose a player to remove from the draft:",
-            view=KickPlayerView(self.guild_id),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            KickPlayerSearchModal()
         )
 
     @discord.ui.button(label="Move Player", style=discord.ButtonStyle.secondary, row=0)
@@ -118,10 +116,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose a signed player. They will move to the other lobby area:",
-            view=MovePlayerView(self.guild_id),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            MovePlayerSearchModal()
         )
 
     @discord.ui.button(label="Swap Players", style=discord.ButtonStyle.secondary, row=0)
@@ -129,10 +125,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose one lobby player and one waiting-room player:",
-            view=SwapPlayersView(self.guild_id),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            SwapPlayersSearchModal()
         )
 
     @discord.ui.button(label="Queue Position", style=discord.ButtonStyle.secondary, row=0)
@@ -140,10 +134,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose a waiting-room player to reposition:",
-            view=QueuePlayerView(self.guild_id),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            QueuePlayerSearchModal()
         )
 
     @discord.ui.button(label="Timeout Player", style=discord.ButtonStyle.secondary, row=1)
@@ -151,10 +143,8 @@ class AdminPanelView(discord.ui.View):
         if not await self._ensure_admin(interaction):
             return
 
-        await interaction.response.send_message(
-            "Choose a registered player to timeout:",
-            view=TimeoutPlayerView(interaction),
-            ephemeral=True,
+        await interaction.response.send_modal(
+            TimeoutPlayerSearchModal()
         )
 
     @discord.ui.button(label="Active Timeouts", style=discord.ButtonStyle.secondary, row=1)

@@ -119,19 +119,14 @@ def _player_matches_admin_search(guild, user_id, data, current):
     )
 
 
-def find_registered_player_matches(guild, query, excluded_ids=None):
-    """Find registered guild members by partial IGN/nickname/username match."""
-    excluded_ids = set(excluded_ids or [])
-    guild_member_ids = {member.id for member in guild.members}
+def find_player_matches(guild, query, candidate_ids):
+    """Find candidate players by partial IGN/nickname/display-name/username."""
+    candidate_ids = set(candidate_ids)
     matches = []
 
     for user_id, data in svc.players.items():
         ign = data.get("ign")
-        if (
-            not ign
-            or user_id not in guild_member_ids
-            or user_id in excluded_ids
-        ):
+        if not ign or user_id not in candidate_ids:
             continue
 
         if not _player_matches_admin_search(guild, user_id, data, query):
@@ -147,6 +142,46 @@ def find_registered_player_matches(guild, query, excluded_ids=None):
 
     matches.sort()
     return [user_id for _not_exact, _ign, user_id in matches]
+
+
+def resolve_player_search(guild, query, candidate_ids):
+    """Return (selected_user_id, matches) without guessing ambiguous names."""
+    matches = find_player_matches(guild, query, candidate_ids)
+
+    exact_matches = [
+        user_id
+        for user_id in matches
+        if _player_matches_admin_value(
+            guild,
+            user_id,
+            svc.players[user_id],
+            query,
+        )
+    ]
+
+    if len(exact_matches) == 1:
+        return exact_matches[0], matches
+
+    if len(matches) == 1:
+        return matches[0], matches
+
+    return None, matches
+
+
+def find_registered_player_matches(guild, query, excluded_ids=None):
+    """Find registered guild members by partial IGN/nickname/username match."""
+    excluded_ids = set(excluded_ids or [])
+    candidate_ids = {
+        member.id
+        for member in guild.members
+        if member.id not in excluded_ids
+    }
+
+    return find_player_matches(
+        guild,
+        query,
+        candidate_ids,
+    )
 
 
 def _find_admin_player(interaction: discord.Interaction, value: str):

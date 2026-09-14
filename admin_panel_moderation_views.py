@@ -5,6 +5,10 @@ from moderation_service import remove_lobby_timeout
 
 import draft_service as svc
 from views import TimeoutDurationView
+from admin_player_helpers import (
+    admin_player_choice_label,
+    resolve_player_search,
+)
 
 
 async def _ensure_admin(interaction):
@@ -32,7 +36,123 @@ def _registered_timeout_candidates(interaction):
             if user_id in guild_member_ids and player.get("ign")
         ),
         key=lambda user_id: svc.players[user_id]["ign"].casefold(),
-    )[:25]
+    )
+
+
+async def _show_timeout_duration(interaction, user_id):
+    player = svc.players.get(user_id)
+
+    if not player:
+        await interaction.response.send_message(
+            "That registered player could not be found.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_message(
+        f"Choose how long to timeout **{player['ign']}** from draft lobbies:",
+        view=TimeoutDurationView(
+            svc.get_view_context(interaction.guild.id),
+            user_id,
+        ),
+        ephemeral=True,
+    )
+
+
+class TimeoutPlayerSearchResultSelect(discord.ui.Select):
+    def __init__(self, guild, user_ids):
+        options = []
+
+        for user_id in list(user_ids)[:25]:
+            player = svc.players[user_id]
+            options.append(
+                discord.SelectOption(
+                    label=admin_player_choice_label(
+                        guild,
+                        user_id,
+                        player["ign"],
+                    ),
+                    value=str(user_id),
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose the player to timeout",
+            options=options,
+        )
+
+    async def callback(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        await _show_timeout_duration(
+            interaction,
+            int(self.values[0]),
+        )
+
+
+class TimeoutPlayerSearchResultsView(discord.ui.View):
+    def __init__(self, guild, user_ids):
+        super().__init__(timeout=300)
+        self.add_item(
+            TimeoutPlayerSearchResultSelect(
+                guild,
+                user_ids,
+            )
+        )
+
+
+class TimeoutPlayerSearchModal(discord.ui.Modal, title="Timeout Player"):
+    player_search = discord.ui.TextInput(
+        label="Find registered player",
+        placeholder="IGN, Discord nickname, or username",
+        required=True,
+        max_length=100,
+    )
+
+    async def on_submit(self, interaction):
+        if not await _ensure_admin(interaction):
+            return
+
+        query = str(self.player_search.value).strip()
+        candidate_ids = _registered_timeout_candidates(interaction)
+
+        selected_user_id, matches = resolve_player_search(
+            interaction.guild,
+            query,
+            candidate_ids,
+        )
+
+        if selected_user_id is not None:
+            await _show_timeout_duration(
+                interaction,
+                selected_user_id,
+            )
+            return
+
+        if not matches:
+            await interaction.response.send_message(
+                f"No registered player matched **{query}**.",
+                ephemeral=True,
+            )
+            return
+
+        showing = matches[:25]
+        note = ""
+        if len(matches) > 25:
+            note = (
+                f" Showing the first **25** of **{len(matches)}** matches; "
+                "search more specifically if needed."
+            )
+
+        await interaction.response.send_message(
+            f"Found **{len(matches)}** matches for **{query}**.{note}",
+            view=TimeoutPlayerSearchResultsView(
+                interaction.guild,
+                showing,
+            ),
+            ephemeral=True,
+        )
 
 
 class TimeoutPlayerSelect(discord.ui.Select):
