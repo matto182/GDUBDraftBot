@@ -71,7 +71,27 @@ def register_lobby_commands(bot):
             view=DraftBoardView(svc.get_view_context)
         )
 
-    @bot.tree.command(name="startdraft", description="Start the draft once the lobby has 16 players.")
+    @bot.tree.command(name="lobbysize", description="Change the active draft lobby size (2-16).")
+    @app_commands.describe(size="Number of players required to fill and start the lobby")
+    async def lobbysize(interaction: discord.Interaction, size: int):
+        if not svc.is_draft_admin(interaction):
+            await interaction.response.send_message(
+                "Only draft admins can change the lobby size.",
+                ephemeral=True
+            )
+            return
+
+        if size < 2 or size > 16:
+            await interaction.response.send_message(
+                "Lobby size must be between 2 and 16 players.",
+                ephemeral=True
+            )
+            return
+
+        svc.load_lobby_state(interaction.guild.id)
+        await svc.set_lobby_size(interaction, size)
+
+    @bot.tree.command(name="startdraft", description="Start the draft once the configured lobby is full.")
     async def startdraft(interaction: discord.Interaction):
         await svc.run_startdraft(interaction)
 

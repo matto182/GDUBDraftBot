@@ -149,7 +149,7 @@ def build_draft_board_embed(guild_id):
             "**Before signing up:**\n"
             "1. Use `/name` to set your in-game name.\n"
             "2. Use `/role` to pick your roles, in order of priority.\n\n"
-            f"## Lobby — {len(lobby)}/16\n"
+            f"## Lobby — {len(lobby)}/{state.lobby_size}\n"
             f"{lobby_text}\n\n"
             f"## Waiting Room — {len(waiting_room)}\n"
             f"{waiting_text}"

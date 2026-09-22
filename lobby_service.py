@@ -5,16 +5,72 @@ import discord
 from database import get_lobby_ban
 from state import get_state
 from service_runtime import players
-from lobby_state_service import fill_lobby_from_waiting_room, save_lobby_state
+from lobby_state_service import (
+    enforce_lobby_size,
+    fill_lobby_from_waiting_room,
+    save_lobby_state,
+)
 from board_service import build_draft_board_embed, player_label, post_new_draft_board
 from moderation_service import format_timeout_remaining
 from lobby_full_notification_service import queue_lobby_full_notification
 
 
+def _lobby_is_full(state):
+    return len(state.lobby) >= state.lobby_size
+
+
+async def set_lobby_size(interaction: discord.Interaction, size: int):
+    guild_id = interaction.guild.id
+    state = get_state(guild_id)
+
+    if size < 2 or size > 16:
+        await interaction.response.send_message(
+            "Lobby size must be between 2 and 16 players.",
+            ephemeral=True
+        )
+        return False
+
+    if state.captain_draft or state.draft_result:
+        await interaction.response.send_message(
+            "Reset the current draft before changing the lobby size.",
+            ephemeral=True
+        )
+        return False
+
+    old_size = state.lobby_size
+
+    if size == old_size:
+        await interaction.response.send_message(
+            f"Lobby size is already **{size}**.",
+            ephemeral=True
+        )
+        return True
+
+    state.lobby_size = size
+
+    displaced = enforce_lobby_size(guild_id)
+    promoted = fill_lobby_from_waiting_room(guild_id)
+    save_lobby_state(guild_id)
+
+    details = []
+    if displaced:
+        details.append(f"Moved **{len(displaced)}** player(s) to the front of the waiting room.")
+    if promoted:
+        details.append(f"Moved **{len(promoted)}** waiting player(s) into the lobby.")
+
+    message = f"Lobby size changed from **{old_size}** to **{size}**."
+    if details:
+        message += "\n" + "\n".join(details)
+
+    await interaction.response.send_message(message, ephemeral=True)
+    await post_new_draft_board(guild_id)
+    return True
+
+
 async def reset_draft_only(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
-    was_full = len(state.lobby) == 16
+    was_full = _lobby_is_full(state)
 
     state.final_team_a = []
     state.final_team_b = []
@@ -26,7 +82,7 @@ async def reset_draft_only(interaction: discord.Interaction, silent=False):
     fill_lobby_from_waiting_room(guild_id)
     save_lobby_state(guild_id)
 
-    if not was_full and len(state.lobby) == 16:
+    if not was_full and _lobby_is_full(state):
         queue_lobby_full_notification(guild_id)
 
     if silent:
@@ -39,10 +95,11 @@ async def reset_draft_only(interaction: discord.Interaction, silent=False):
 
     return True
 
+
 async def kick_from_draft(interaction: discord.Interaction, user_id: int):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
-    was_full = len(state.lobby) == 16
+    was_full = _lobby_is_full(state)
 
     removed = False
 
@@ -69,7 +126,7 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
         )
         return
 
-    if not was_full and len(state.lobby) == 16:
+    if not was_full and _lobby_is_full(state):
         queue_lobby_full_notification(guild_id)
 
     await interaction.response.send_message(
@@ -79,10 +136,11 @@ async def kick_from_draft(interaction: discord.Interaction, user_id: int):
 
     await post_new_draft_board(guild_id)
 
+
 async def signup_player(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
-    was_full = len(state.lobby) == 16
+    was_full = _lobby_is_full(state)
 
     user_id = interaction.user.id
 
@@ -120,10 +178,15 @@ async def signup_player(interaction: discord.Interaction, silent=False):
 
     # Preserve FIFO: existing waiting-room players always get first claim
     # on any open lobby slots before a brand-new signup can enter.
-    if not state.captain_draft and not state.draft_result and len(state.lobby) < 16:
+    if not state.captain_draft and not state.draft_result and len(state.lobby) < state.lobby_size:
         fill_lobby_from_waiting_room(guild_id)
 
-    if state.captain_draft or state.draft_result or len(state.lobby) >= 16 or state.waiting_room:
+    if (
+        state.captain_draft
+        or state.draft_result
+        or len(state.lobby) >= state.lobby_size
+        or state.waiting_room
+    ):
         state.waiting_room.append(user_id)
     else:
         state.lobby.append(user_id)
@@ -131,7 +194,7 @@ async def signup_player(interaction: discord.Interaction, silent=False):
     state.last_signup_time = time.time()
     save_lobby_state(guild_id)
 
-    if not was_full and len(state.lobby) == 16:
+    if not was_full and _lobby_is_full(state):
         queue_lobby_full_notification(guild_id)
 
     if silent:
@@ -141,10 +204,11 @@ async def signup_player(interaction: discord.Interaction, silent=False):
 
     return True
 
+
 async def drop_player(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
-    was_full = len(state.lobby) == 16
+    was_full = _lobby_is_full(state)
 
     user_id = interaction.user.id
     removed = False
@@ -173,7 +237,7 @@ async def drop_player(interaction: discord.Interaction, silent=False):
 
     save_lobby_state(guild_id)
 
-    if not was_full and len(state.lobby) == 16:
+    if not was_full and _lobby_is_full(state):
         queue_lobby_full_notification(guild_id)
 
     if silent:
@@ -182,6 +246,7 @@ async def drop_player(interaction: discord.Interaction, silent=False):
         await interaction.response.send_message("You dropped from the lobby/waiting room.", ephemeral=True)
 
     return True
+
 
 async def vote_player(interaction: discord.Interaction, mode_value: str, mode_name: str, silent=False):
     guild_id = interaction.guild.id
@@ -214,6 +279,7 @@ async def vote_player(interaction: discord.Interaction, mode_value: str, mode_na
         )
 
     return True
+
 
 async def volunteer_captain(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
@@ -254,6 +320,7 @@ async def volunteer_captain(interaction: discord.Interaction, silent=False):
 
     return True
 
+
 async def wipe_lobby(interaction: discord.Interaction, silent=False):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
@@ -280,4 +347,3 @@ async def wipe_lobby(interaction: discord.Interaction, silent=False):
         )
 
     await post_new_draft_board(guild_id)
-

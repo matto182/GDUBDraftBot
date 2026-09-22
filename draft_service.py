@@ -23,6 +23,7 @@ from lobby_service import (
     drop_player,
     kick_from_draft,
     reset_draft_only,
+    set_lobby_size,
     signup_player,
     volunteer_captain,
     vote_player,

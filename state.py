@@ -10,6 +10,7 @@ class GuildState:
         self.final_team_b = []
         self.last_signup_time = None
         self.last_balance_debug = None
+        self.lobby_size = 16
 
 
 guild_states = {}

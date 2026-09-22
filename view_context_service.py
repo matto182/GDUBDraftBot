@@ -27,6 +27,7 @@ def get_view_context(guild_id):
         players=players,
         lobby=state.lobby,
         waiting_room=state.waiting_room,
+        lobby_size=state.lobby_size,
 
         get_captain_draft=lambda: state.captain_draft,
 

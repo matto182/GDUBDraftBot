@@ -53,9 +53,9 @@ class DraftBoardView(discord.ui.View):
             )
             return
 
-        if len(ctx.lobby) != 16:
+        if len(ctx.lobby) != ctx.lobby_size:
             await interaction.response.send_message(
-                f"Need exactly 16 players. Current: {len(ctx.lobby)}/16",
+                f"Need exactly {ctx.lobby_size} players. Current: {len(ctx.lobby)}/{ctx.lobby_size}",
                 ephemeral=True
             )
             return

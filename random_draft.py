@@ -1,6 +1,6 @@
 import random
 
-from config import BACKLINE_ROLES
+from config import BACKLINE_ROLES, normalize_roles
 from draft_constants import HISTORICAL_BACKLINE_COST, OFF_ROLE_COST, COMPOSITION_QUALITY_WEIGHT
 from role_assignment import _build_role_cache, assign_best_team_roles
 from balance_scoring import (
@@ -78,7 +78,7 @@ def _split_has_required_coverage(
     return True
 
 
-def generate_random_teams(players, lobby, player_weights=None):
+def _generate_full_8v8_teams(players, lobby, player_weights=None):
     """Build two balanced teams while respecting role fit and hidden weights."""
     player_weights = player_weights or {}
     lobby = tuple(lobby)
@@ -224,3 +224,227 @@ def generate_random_teams(players, lobby, player_weights=None):
         "extreme_stack_rule_enforced": enforce_extreme_rule,
     }
     return team_a_result["team"], team_b_result["team"], formation
+
+MONK_ROLES = ("Prot Monk", "Heal Monk")
+
+
+def _primary_display_role(players, user_id):
+    roles = normalize_roles(players[user_id].get("roles", []))
+    return roles[0] if roles else "Unassigned"
+
+
+def _monk_roles_for_player(players, user_id):
+    roles = normalize_roles(players[user_id].get("roles", []))
+    return tuple(role for role in MONK_ROLES if role in roles)
+
+
+def _can_cover_both_monk_roles(players, user_ids):
+    if len(user_ids) < 2:
+        return False
+
+    first_roles = set(_monk_roles_for_player(players, user_ids[0]))
+    second_roles = set(_monk_roles_for_player(players, user_ids[1]))
+
+    return (
+        ("Prot Monk" in first_roles and "Heal Monk" in second_roles)
+        or ("Heal Monk" in first_roles and "Prot Monk" in second_roles)
+    )
+
+
+def _choose_monk_backlines(players, lobby):
+    """Choose up to two monk-capable players per team, best effort."""
+    monk_candidates = [
+        user_id
+        for user_id in lobby
+        if _monk_roles_for_player(players, user_id)
+    ]
+    random.shuffle(monk_candidates)
+
+    slot_teams = ("A", "A", "B", "B")
+    best_score = None
+    best_selection = {"A": [], "B": []}
+
+    def score_selection(selection):
+        count_a = len(selection["A"])
+        count_b = len(selection["B"])
+        filled = count_a + count_b
+        spread = min(count_a, count_b)
+        complete_pairs = int(_can_cover_both_monk_roles(players, selection["A"]))
+        complete_pairs += int(_can_cover_both_monk_roles(players, selection["B"]))
+        return filled, spread, complete_pairs
+
+    def search(slot_index, used, selection):
+        nonlocal best_score, best_selection
+
+        if slot_index == len(slot_teams):
+            candidate_score = score_selection(selection)
+            if best_score is None or candidate_score > best_score:
+                best_score = candidate_score
+                best_selection = {
+                    "A": list(selection["A"]),
+                    "B": list(selection["B"]),
+                }
+            return
+
+        team_name = slot_teams[slot_index]
+
+        # Skipping a slot allows the search to find the best possible result
+        # when fewer than four monk-capable players are available.
+        search(slot_index + 1, used, selection)
+
+        for user_id in monk_candidates:
+            if user_id in used:
+                continue
+
+            selection[team_name].append(user_id)
+            used.add(user_id)
+            search(slot_index + 1, used, selection)
+            used.remove(user_id)
+            selection[team_name].pop()
+
+    search(0, set(), {"A": [], "B": []})
+    return best_selection
+
+
+def _assign_monk_roles(players, user_ids):
+    """Label selected monk players, preferring Prot + Heal when possible."""
+    if not user_ids:
+        return []
+
+    if len(user_ids) == 1:
+        roles = _monk_roles_for_player(players, user_ids[0])
+        role = roles[0] if roles else _primary_display_role(players, user_ids[0])
+        return [(user_ids[0], role)]
+
+    first_id, second_id = user_ids[:2]
+    first_roles = _monk_roles_for_player(players, first_id)
+    second_roles = _monk_roles_for_player(players, second_id)
+
+    options = [
+        (first_role, second_role)
+        for first_role in first_roles
+        for second_role in second_roles
+    ]
+
+    if options:
+        random.shuffle(options)
+        first_role, second_role = max(
+            options,
+            key=lambda pair: int(set(pair) == set(MONK_ROLES)),
+        )
+        return [(first_id, first_role), (second_id, second_role)]
+
+    return [
+        (first_id, _primary_display_role(players, first_id)),
+        (second_id, _primary_display_role(players, second_id)),
+    ]
+
+
+def _simple_formation(team_a, team_b, player_weights, mode_label):
+    weight_a = sum(player_weights.get(user_id, 0) for user_id, _role in team_a)
+    weight_b = sum(player_weights.get(user_id, 0) for user_id, _role in team_b)
+
+    return {
+        "score": 0,
+        "team_a": mode_label,
+        "team_b": mode_label,
+        "team_a_weight": weight_a,
+        "team_b_weight": weight_b,
+        "team_a_effective_strength": weight_a,
+        "team_b_effective_strength": weight_b,
+        "team_a_composition_penalty": 0,
+        "team_b_composition_penalty": 0,
+        "team_a_off_role_count": 0,
+        "team_b_off_role_count": 0,
+        "team_a_historical_backline_fills": 0,
+        "team_b_historical_backline_fills": 0,
+        "candidate_splits_checked": 0,
+        "exact_splits_checked": 0,
+        "unique_teams_evaluated": 0,
+        "extreme_stack_rule_enforced": False,
+        "uses_full_optimizer": False,
+    }
+
+
+def _generate_monk_random_teams(players, lobby, player_weights):
+    """For 6v6/7v7-sized drafts, seed monk backlines then randomize the rest."""
+    lobby = tuple(lobby)
+    team_a_target = (len(lobby) + 1) // 2
+    team_b_target = len(lobby) // 2
+
+    selected = _choose_monk_backlines(players, lobby)
+    team_a = _assign_monk_roles(players, selected["A"])
+    team_b = _assign_monk_roles(players, selected["B"])
+
+    selected_ids = set(selected["A"]) | set(selected["B"])
+    remaining_players = [user_id for user_id in lobby if user_id not in selected_ids]
+    random.shuffle(remaining_players)
+
+    open_slots = (
+        ["A"] * max(0, team_a_target - len(team_a))
+        + ["B"] * max(0, team_b_target - len(team_b))
+    )
+    random.shuffle(open_slots)
+
+    for user_id, team_name in zip(remaining_players, open_slots):
+        entry = (user_id, _primary_display_role(players, user_id))
+        if team_name == "A":
+            team_a.append(entry)
+        else:
+            team_b.append(entry)
+
+    mode_label = "2 Monk Backline + Random Remainder"
+    formation = _simple_formation(team_a, team_b, player_weights, mode_label)
+    return team_a, team_b, formation
+
+
+def _generate_fully_random_teams(players, lobby, player_weights):
+    """For 5v5 and smaller formats, randomize the entire lobby."""
+    shuffled = list(lobby)
+    random.shuffle(shuffled)
+
+    team_a_target = (len(shuffled) + 1) // 2
+    team_a_ids = shuffled[:team_a_target]
+    team_b_ids = shuffled[team_a_target:]
+
+    team_a = [
+        (user_id, _primary_display_role(players, user_id))
+        for user_id in team_a_ids
+    ]
+    team_b = [
+        (user_id, _primary_display_role(players, user_id))
+        for user_id in team_b_ids
+    ]
+
+    mode_label = "Full Random"
+    formation = _simple_formation(team_a, team_b, player_weights, mode_label)
+    return team_a, team_b, formation
+
+
+def generate_random_teams(players, lobby, player_weights=None):
+    """Generate teams using the rules for the currently configured lobby size."""
+    player_weights = player_weights or {}
+    lobby = tuple(lobby)
+    lobby_size = len(lobby)
+
+    if lobby_size < 2 or lobby_size > 16:
+        raise ValueError("Random draft requires between 2 and 16 players.")
+
+    # Preserve the existing full 8v8 optimizer exactly for the standard lobby.
+    if lobby_size == 16:
+        team_a, team_b, formation = _generate_full_8v8_teams(
+            players,
+            lobby,
+            player_weights,
+        )
+        formation["uses_full_optimizer"] = True
+        return team_a, team_b, formation
+
+    # Odd sizes inherit the rule of the smaller team: 15 -> 8v7, 13 -> 7v6,
+    # 11 -> 6v5. Only formats where both teams have at least six players get
+    # the best-effort two-monk backline seeding.
+    if min(lobby_size // 2, (lobby_size + 1) // 2) >= 6:
+        return _generate_monk_random_teams(players, lobby, player_weights)
+
+    return _generate_fully_random_teams(players, lobby, player_weights)
+
