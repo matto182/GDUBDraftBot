@@ -1876,7 +1876,7 @@ def build_admin_panel_embed(guild_id):
 
     embed.add_field(
         name="Lobby",
-        value=f"**{len(state.lobby)}/16** active",
+        value=f"**{len(state.lobby)}/{state.lobby_size}** active",
         inline=True,
     )
     embed.add_field(

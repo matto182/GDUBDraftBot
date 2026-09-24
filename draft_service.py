@@ -160,11 +160,11 @@ from database import (
 
 
 async def maybe_send_lobby_full_notification(guild_id):
-    """Ping the active 16-player lobby at most once per guild every 4 hours."""
+    """Ping the active full lobby at most once per guild every 4 hours."""
     state = get_state(guild_id)
 
     # Only announce a newly full pre-draft lobby.
-    if len(state.lobby) != 16:
+    if len(state.lobby) != state.lobby_size:
         return False
 
     if state.captain_draft or state.draft_result:
@@ -179,7 +179,7 @@ async def maybe_send_lobby_full_notification(guild_id):
     if not claim_lobby_full_notification(guild_id, claimed_at):
         return False
 
-    # Snapshot the exact 16 players that caused the full-lobby event.
+    # Snapshot the exact players that caused the full-lobby event.
     lobby_user_ids = list(state.lobby)
 
     try:
@@ -194,7 +194,7 @@ async def maybe_send_lobby_full_notification(guild_id):
         # send a stale ping and do not consume the cooldown.
         current_state = get_state(guild_id)
         if (
-            len(current_state.lobby) != 16
+            len(current_state.lobby) != current_state.lobby_size
             or current_state.captain_draft
             or current_state.draft_result
             or list(current_state.lobby) != lobby_user_ids
@@ -584,7 +584,7 @@ async def timeout_from_draft(
 ):
     guild_id = interaction.guild.id
     state = get_state(guild_id)
-    was_full = len(state.lobby) == 16
+    was_full = len(state.lobby) >= state.lobby_size
 
     if not is_draft_admin(interaction):
         await interaction.response.send_message(
@@ -614,7 +614,7 @@ async def timeout_from_draft(
     fill_lobby_from_waiting_room(guild_id)
     save_lobby_state(guild_id)
 
-    if not was_full and len(state.lobby) == 16:
+    if not was_full and len(state.lobby) >= state.lobby_size:
         queue_lobby_full_notification(guild_id)
 
     ign = players.get(user_id, {}).get("ign", "Unknown player")
@@ -1728,7 +1728,7 @@ def add_player(guild_id, user_id, location):
         if state.captain_draft:
             return False, "You cannot add someone to the lobby during an active Captain Draft."
 
-        if len(state.lobby) >= 16:
+        if len(state.lobby) >= state.lobby_size:
             return False, "The lobby is full. Add them to the waiting room or use `/swapplayers`."
 
         state.lobby.append(user_id)
@@ -1742,7 +1742,7 @@ def add_player(guild_id, user_id, location):
     state.last_signup_time = time.time()
     save_lobby_state(guild_id)
 
-    if location == "lobby" and len(state.lobby) == 16:
+    if location == "lobby" and len(state.lobby) >= state.lobby_size:
         queue_lobby_full_notification(guild_id)
 
     return True, f"Added **{player['ign']}** to the **{destination}**."
@@ -1848,7 +1848,7 @@ def move_player(guild_id, user_id, destination):
         if state.captain_draft:
             return False, "You cannot add a player to the lobby during an active Captain Draft."
 
-        if len(state.lobby) >= 16:
+        if len(state.lobby) >= state.lobby_size:
             return False, "The lobby is full. Use `/swapplayers` to exchange them with a lobby player."
 
         missing_drafted_user_id = None
@@ -1881,7 +1881,7 @@ def move_player(guild_id, user_id, destination):
 
     save_lobby_state(guild_id)
 
-    if destination == "lobby" and len(state.lobby) == 16:
+    if destination == "lobby" and len(state.lobby) >= state.lobby_size:
         queue_lobby_full_notification(guild_id)
 
     message = f"Moved **{ign}** to the **{destination_label}**."
