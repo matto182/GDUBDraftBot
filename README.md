@@ -1,14 +1,49 @@
 # GDUB Draft Bot
-
+.,
 A Discord bot for running **Guild Wars 1 GvG drafts** and scheduled signup events.
 
-GDUB handles player registration, role preferences, configurable lobbies, waiting rooms, Random and Captain drafts, admin controls, draft history, moderation, voice movement, and recurring event signups.
+## Add the Bot to Your Server
 
-## Features
+Use this invite link:
 
-### Drafts
+https://discord.com/oauth2/authorize?client_id=1500734117531226112
 
-Players register with:
+After adding the bot, run:
+
+```text
+/setup
+```
+
+## Initial Setup
+
+`/setup` walks a server administrator through the required configuration.
+
+You will choose:
+
+1. **Draft Board Channel**  
+   The text channel where the main interactive draft board will be posted.
+
+2. **Scheduled Events Channel**  
+   The text channel used for scheduled event signup boards.  
+   You can use the same channel as the draft board if you want.
+
+3. **Team A Voice Channel**  
+   Used when admins move drafted Team A players into voice.
+
+4. **Team B Voice Channel**  
+   Used when admins move drafted Team B players into voice.
+
+5. **Draft Admin Role**  
+   Members with this role can manage drafts, players, timeouts, and other admin controls.
+
+6. **Owner Role**  
+   The server role used for owner-level bot access.
+
+When setup is complete, the bot posts the draft board automatically.
+
+## Player Setup
+
+Before joining a draft, each player should register:
 
 ```text
 /name
@@ -23,25 +58,60 @@ Current roles:
 - Heal Monk
 - 8 Support
 
-Players can then join from the persistent draft board or with:
+Players can then join with the draft board buttons or:
 
 ```text
 /signup
-/drop
 ```
 
-Lobby size is configurable from **2–16 players** with `/lobbysize`. The default is **16**. Once full, additional players enter a FIFO waiting room and are promoted when slots open.
+## Draft Board
 
-Supported draft modes:
+The draft board is the main interface for players.
 
-- **Random Draft** — automatically builds two teams and assigns roles.
-- **Captain Draft** — two volunteers become captains and alternate picks.
+Players can:
 
-Completed drafts are saved automatically.
+- Sign up
+- Drop
+- Vote for Captain or Random Draft
+- Volunteer as captain
+- View draft status
 
-### Admin Panel
+Admins can also start drafts and open the Admin Panel from the board.
 
-Open with:
+## Lobby Size
+
+The default lobby size is **16 players**.
+
+Admins can change it from **2 to 16** with:
+
+```text
+/lobbysize
+```
+
+When the active lobby is full, additional players enter the waiting room.
+
+When slots open, waiting-room players are promoted automatically in FIFO order.
+
+## Draft Modes
+
+### Random Draft
+
+Random Draft automatically:
+
+- Splits the lobby into Team A and Team B
+- Uses player role preferences
+- Assigns final roles
+- Saves the completed draft to history
+
+### Captain Draft
+
+Captain Draft allows players to volunteer as captains.
+
+Two captains are selected and alternate picks until teams are complete.
+
+## Admin Panel
+
+Open the Admin Panel with:
 
 ```text
 /admin
@@ -49,26 +119,23 @@ Open with:
 
 Admins can:
 
-- Add, kick, move, and swap players
+- Add players
+- Kick players
+- Move players between lobby and waiting room
+- Swap lobby and waiting-room players
 - Change waiting-room order
 - Timeout players
-- Reset drafts or wipe the lobby
+- Remove active timeouts
+- Reset a draft
+- Wipe the lobby
 - Move completed teams to voice channels
 - Refresh the draft board
 
-### History and Stats
+## Scheduled Events
 
-```text
-/history
-/stats
-/inspectplayer
-```
+The bot also supports one-time and recurring signup events.
 
-The bot stores completed drafts, team assignments, player aliases, captain appearances, role assignments, and moderation state.
-
-### Scheduled Events
-
-The bot also supports one-time and recurring signup events with their own Discord boards.
+Main commands:
 
 ```text
 /event create
@@ -85,11 +152,18 @@ The bot also supports one-time and recurring signup events with their own Discor
 /events
 ```
 
-Events support weekly recurrence, time zones, signup limits, waiting lists, and automatic promotion when a slot opens.
+Scheduled events support:
 
-## Commands
+- One-time events
+- Weekly recurring events
+- Time-zone aware scheduling
+- Signup limits
+- Waiting lists
+- Automatic promotion when a slot opens
 
-### Player
+## Common Commands
+
+### Players
 
 ```text
 /name
@@ -136,24 +210,6 @@ Events support weekly recurrence, time zones, signup limits, waiting lists, and 
 /setup
 ```
 
-## Setup
-
-Run:
-
-```text
-/setup
-```
-
-The setup wizard configures:
-
-- Draft board channel
-- Scheduled events channel
-- Team A and Team B voice channels
-- Draft Admin role
-- Owner role
-
-Players then register with `/name` and `/role`.
-
 ## Running Locally
 
 Install dependencies:
@@ -162,7 +218,7 @@ Install dependencies:
 python -m pip install discord.py python-dotenv tzdata
 ```
 
-Create `.env`:
+Create a `.env` file:
 
 ```text
 TOKEN=YOUR_DISCORD_BOT_TOKEN
@@ -174,7 +230,11 @@ Start the bot:
 python bot.py
 ```
 
-SQLite data is stored in `players.db`.
+The SQLite database is stored in:
+
+```text
+players.db
+```
 
 ## Tests
 
