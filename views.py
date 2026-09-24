@@ -7,6 +7,38 @@
 
 import discord
 
+
+class SetNameModal(discord.ui.Modal, title="Set Your In-Game Name"):
+    def __init__(self, save_callback, current_ign=None):
+        super().__init__()
+        self.save_callback = save_callback
+
+        input_kwargs = {
+            "label": "Guild Wars 1 in-game name",
+            "placeholder": "Enter your in-game name",
+            "required": True,
+            "max_length": 100,
+        }
+
+        if current_ign:
+            input_kwargs["default"] = str(current_ign)[:100]
+
+        self.ign_input = discord.ui.TextInput(**input_kwargs)
+        self.add_item(self.ign_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        ign = str(self.ign_input.value).strip()
+
+        if not ign:
+            await interaction.response.send_message(
+                "Enter a valid in-game name.",
+                ephemeral=True,
+            )
+            return
+
+        await self.save_callback(interaction, ign)
+
+
 class KickPlayerSelect(discord.ui.Select):
     def __init__(self, ctx):
         self.ctx = ctx

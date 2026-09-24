@@ -13,6 +13,7 @@ from discord import app_commands
 
 from config import ROLES, BACKLINE_ROLES
 from database import save_player, get_player_stats, mark_player_has_played_backline
+from views import SetNameModal
 
 import draft_service as svc
 
@@ -77,10 +78,9 @@ def register_player_commands(bot):
         )
         await interaction.response.send_message(embed=embed)
 
-    @bot.tree.command(name="name", description="Register your Guild Wars 1 in-game name.")
-    @app_commands.describe(ign="Your in-game name")
-    async def name(interaction: discord.Interaction, ign: str):
+    async def save_name_from_modal(interaction: discord.Interaction, ign: str):
         user_id = interaction.user.id
+
         if user_id not in svc.players:
             svc.players[user_id] = {
                 "discord_name": interaction.user.display_name,
@@ -93,8 +93,31 @@ def register_player_commands(bot):
             record_name_change(user_id, previous_ign, ign)
             svc.players[user_id]["ign"] = ign
 
-        save_player(user_id, interaction.user.display_name, svc.players[user_id]["ign"], svc.players[user_id]["roles"])
-        await interaction.response.send_message(f"Registered your IGN as **{ign}**.", ephemeral=True)
+        save_player(
+            user_id,
+            interaction.user.display_name,
+            svc.players[user_id]["ign"],
+            svc.players[user_id]["roles"],
+            has_played_backline=svc.players[user_id].get("has_played_backline", False),
+        )
+        await interaction.response.send_message(
+            f"Registered your IGN as **{ign}**.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="name", description="Register or change your Guild Wars 1 in-game name.")
+    async def name(interaction: discord.Interaction):
+        current_ign = None
+        player = svc.players.get(interaction.user.id)
+        if player:
+            current_ign = player.get("ign")
+
+        await interaction.response.send_modal(
+            SetNameModal(
+                save_callback=save_name_from_modal,
+                current_ign=current_ign,
+            )
+        )
 
     @bot.tree.command(name="role", description="Set the roles you can play.")
     @app_commands.describe(
