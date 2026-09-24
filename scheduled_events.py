@@ -30,6 +30,16 @@ REGIONAL_ZONES = {
     'CT': 'America/Chicago', 'CENTRAL': 'America/Chicago',
     'MT': 'America/Denver', 'MOUNTAIN': 'America/Denver',
     'PT': 'America/Los_Angeles', 'PACIFIC': 'America/Los_Angeles',
+    'LONDON': 'Europe/London', 'DUBLIN': 'Europe/Dublin',
+    'LISBON': 'Europe/Lisbon', 'PARIS': 'Europe/Paris',
+    'BERLIN': 'Europe/Berlin', 'ROME': 'Europe/Rome',
+    'MADRID': 'Europe/Madrid', 'WARSAW': 'Europe/Warsaw',
+    'ATHENS': 'Europe/Athens', 'HELSINKI': 'Europe/Helsinki',
+    'BUCHAREST': 'Europe/Bucharest',
+    'SYDNEY': 'Australia/Sydney', 'MELBOURNE': 'Australia/Melbourne',
+    'BRISBANE': 'Australia/Brisbane', 'ADELAIDE': 'Australia/Adelaide',
+    'PERTH': 'Australia/Perth',
+    'AUCKLAND': 'Pacific/Auckland', 'WELLINGTON': 'Pacific/Auckland',
 }
 FIXED_ABBREVIATIONS = {
     'EST': -5, 'EDT': -4, 'CST': -6, 'CDT': -5,
@@ -40,7 +50,40 @@ ZONE_LABELS = {
     'America/Chicago': 'Central (CST/CDT)',
     'America/Denver': 'Mountain (MST/MDT)',
     'America/Los_Angeles': 'Pacific (PST/PDT)',
+    'Europe/London': 'London (GMT/BST)',
+    'Europe/Dublin': 'Dublin (GMT/IST)',
+    'Europe/Lisbon': 'Lisbon (WET/WEST)',
+    'Europe/Paris': 'Paris (CET/CEST)',
+    'Europe/Berlin': 'Berlin (CET/CEST)',
+    'Europe/Rome': 'Rome (CET/CEST)',
+    'Europe/Madrid': 'Madrid (CET/CEST)',
+    'Europe/Warsaw': 'Warsaw (CET/CEST)',
+    'Europe/Athens': 'Athens (EET/EEST)',
+    'Europe/Helsinki': 'Helsinki (EET/EEST)',
+    'Europe/Bucharest': 'Bucharest (EET/EEST)',
+    'Australia/Sydney': 'Sydney (AEST/AEDT)',
+    'Australia/Melbourne': 'Melbourne (AEST/AEDT)',
+    'Australia/Brisbane': 'Brisbane (AEST)',
+    'Australia/Adelaide': 'Adelaide (ACST/ACDT)',
+    'Australia/Perth': 'Perth (AWST)',
+    'Pacific/Auckland': 'New Zealand (NZST/NZDT)',
 }
+
+TIME_ZONE_CHOICES = [
+    ('Eastern (EST/EDT)', 'Eastern'), ('Central (CST/CDT)', 'Central'),
+    ('Mountain (MST/MDT)', 'Mountain'), ('Pacific (PST/PDT)', 'Pacific'),
+    ('UTC / GMT', 'UTC'),
+    ('London (GMT/BST)', 'London'), ('Dublin (GMT/IST)', 'Dublin'),
+    ('Lisbon (WET/WEST)', 'Lisbon'), ('Paris (CET/CEST)', 'Paris'),
+    ('Berlin (CET/CEST)', 'Berlin'), ('Rome (CET/CEST)', 'Rome'),
+    ('Madrid (CET/CEST)', 'Madrid'), ('Warsaw (CET/CEST)', 'Warsaw'),
+    ('Athens (EET/EEST)', 'Athens'), ('Helsinki (EET/EEST)', 'Helsinki'),
+    ('Bucharest (EET/EEST)', 'Bucharest'),
+    ('Sydney (AEST/AEDT)', 'Sydney'), ('Melbourne (AEST/AEDT)', 'Melbourne'),
+    ('Brisbane (AEST)', 'Brisbane'), ('Adelaide (ACST/ACDT)', 'Adelaide'),
+    ('Perth (AWST)', 'Perth'),
+    ('Auckland (NZST/NZDT)', 'Auckland'), ('Wellington (NZST/NZDT)', 'Wellington'),
+]
 
 
 def normalize_time(value):
@@ -82,7 +125,7 @@ def normalize_zone(value):
     try:
         ZoneInfo(value)
     except ZoneInfoNotFoundError as exc:
-        raise ValueError('Choose Eastern, Central, Mountain, Pacific, UTC, or a GMT offset such as GMT+2.') from exc
+        raise ValueError('Choose a region from the menu, UTC, or a GMT offset such as GMT+2.') from exc
     return value
 
 
@@ -104,13 +147,7 @@ def zone_label(value):
 
 
 async def timezone_autocomplete(interaction: discord.Interaction, current: str):
-    options = [
-        ('Eastern — adjusts for EST/EDT', 'Eastern'),
-        ('Central — adjusts for CST/CDT', 'Central'),
-        ('Mountain — adjusts for MST/MDT', 'Mountain'),
-        ('Pacific — adjusts for PST/PDT', 'Pacific'),
-        ('UTC / GMT', 'UTC'),
-    ]
+    options = TIME_ZONE_CHOICES.copy()
     options.extend((f'GMT{hours:+d} — fixed offset', f'GMT{hours:+d}')
                    for hours in range(-12, 15))
     search = current.casefold().strip()
@@ -366,15 +403,15 @@ class EventPlayerPicker(discord.ui.View):
     def __init__(self, event_id, joining):
         super().__init__(timeout=300)
         self.event_id, self.joining = event_id, joining
-        picker = discord.ui.UserSelect(placeholder='Choose a player')
-        picker.callback = self.selected
-        self.add_item(picker)
+        self.player_select = discord.ui.UserSelect(placeholder='Choose a player')
+        self.player_select.callback = self.selected
+        self.add_item(self.player_select)
 
     async def selected(self, interaction):
         if not is_draft_admin(interaction):
             await interaction.response.send_message('Draft admins only.', ephemeral=True)
             return
-        await change_signup(interaction, self.event_id, self.joining, self.children[0].values[0])
+        await change_signup(interaction, self.event_id, self.joining, self.player_select.values[0])
 
 
 class CancelEventView(discord.ui.View):
@@ -557,19 +594,17 @@ class CreateZoneView(discord.ui.View):
     def __init__(self, data):
         super().__init__(timeout=300)
         self.data = data
-        select = discord.ui.Select(placeholder='Choose a time zone', options=[
-            discord.SelectOption(label=label, value=value) for label, value in
-            [('Eastern (EST/EDT)', 'Eastern'), ('Central (CST/CDT)', 'Central'),
-             ('Mountain (MST/MDT)', 'Mountain'), ('Pacific (PST/PDT)', 'Pacific'), ('UTC / GMT', 'UTC')]])
-        select.callback = self.selected
-        self.add_item(select)
+        self.zone_select = discord.ui.Select(placeholder='Choose a time zone', options=[
+            discord.SelectOption(label=label, value=value) for label, value in TIME_ZONE_CHOICES])
+        self.zone_select.callback = self.selected
+        self.add_item(self.zone_select)
 
     async def selected(self, interaction):
         if not is_draft_admin(interaction):
             await interaction.response.send_message('Draft admins only.', ephemeral=True)
             return
         await interaction.response.send_message('Repeat weekly? Select every day you want, or choose One-time.',
-            view=CreateRepeatView(self.data, self.children[0].values[0]), ephemeral=True)
+            view=CreateRepeatView(self.data, self.zone_select.values[0]), ephemeral=True)
 
     @discord.ui.button(label='Custom GMT offset', style=discord.ButtonStyle.secondary)
     async def custom(self, interaction, button):
@@ -583,16 +618,16 @@ class CreateRepeatView(discord.ui.View):
     def __init__(self, data, zone):
         super().__init__(timeout=300)
         self.data, self.zone = data, zone
-        select = discord.ui.Select(placeholder='Weekly days (choose one or more)', min_values=1, max_values=7,
+        self.weekday_select = discord.ui.Select(placeholder='Weekly days (choose one or more)', min_values=1, max_values=7,
             options=[discord.SelectOption(label=day, value=str(index)) for index, day in enumerate(calendar.day_name)])
-        select.callback = self.weekly
-        self.add_item(select)
+        self.weekday_select.callback = self.weekly
+        self.add_item(self.weekday_select)
 
     async def weekly(self, interaction):
         if not is_draft_admin(interaction):
             await interaction.response.send_message('Draft admins only.', ephemeral=True)
             return
-        weekdays = ','.join(sorted(self.children[0].values, key=int))
+        weekdays = ','.join(sorted(self.weekday_select.values, key=int))
         await create_schedule(interaction, self.data, self.zone, weekdays)
         self.stop()
 
@@ -609,14 +644,14 @@ class EventListView(discord.ui.View):
     def __init__(self, rows):
         super().__init__(timeout=900)
         self.events = {str(event['id']): event['id'] for event in rows}
-        select = discord.ui.Select(placeholder='Choose a date to sign up or drop out', options=[
+        self.event_select = discord.ui.Select(placeholder='Choose a date to sign up or drop out', options=[
             discord.SelectOption(label=f"{event['name'][:45]} · {datetime.fromtimestamp(event['starts_at'], UTC):%b %d %H:%M} UTC",
                                  value=str(event['id'])) for event in rows])
-        select.callback = self.selected
-        self.add_item(select)
+        self.event_select.callback = self.selected
+        self.add_item(self.event_select)
 
     async def selected(self, interaction):
-        event_id = self.events.get(self.children[0].values[0])
+        event_id = self.events.get(self.event_select.values[0])
         event = get_event(event_id, interaction.guild.id) if event_id else None
         if not event or event['cancelled']:
             await interaction.response.send_message('This date is no longer available. Run /events again.', ephemeral=True)
