@@ -55,6 +55,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS guild_config (
             guild_id INTEGER PRIMARY KEY,
             draft_channel_id INTEGER,
+            event_channel_id INTEGER,
             team_a_voice_channel_id INTEGER,
             team_b_voice_channel_id INTEGER,
             admin_role_id INTEGER,
@@ -70,6 +71,11 @@ def init_db():
 
     try:
         cursor.execute("ALTER TABLE guild_config ADD COLUMN owner_role_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE guild_config ADD COLUMN event_channel_id INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -150,6 +156,11 @@ def init_db():
             last_sent_at REAL NOT NULL
         )
     """)
+
+    try:
+        cursor.execute("ALTER TABLE guild_config ADD COLUMN board_hidden INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()

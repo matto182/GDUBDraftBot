@@ -4,7 +4,7 @@ import time
 from config import DB_FILE
 
 
-DM_COOLDOWN_SECONDS = 4 * 60 * 60
+DM_COOLDOWN_SECONDS = 8 * 60 * 60
 
 
 def get_player_dm_last_sent(guild_id, user_id):

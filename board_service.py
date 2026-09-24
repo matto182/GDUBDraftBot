@@ -2,6 +2,7 @@ import discord
 
 from config import normalize_roles
 from database import get_guild_config, save_board_message_id
+from guild_repository import is_board_hidden
 from draft_logic import role_sort_key
 from state import get_state
 import service_runtime as runtime
@@ -219,6 +220,8 @@ def build_draft_board_embed(guild_id):
 
 
 async def post_new_draft_board(guild_id):
+    if is_board_hidden(guild_id):
+        return
     from view_context_service import get_view_context
     load_players()
     load_lobby_state(guild_id)

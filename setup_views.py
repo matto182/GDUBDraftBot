@@ -25,7 +25,46 @@ class SetupWizardView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Draft board channel saved: {channel.mention}\n\nNow select Team A voice channel.",
+            f"Draft board channel saved: {channel.mention}\n\nNow select the scheduled events channel, or use the draft board channel.",
+            ephemeral=True,
+            view=SetupEventChannelView(self.ctx, channel.id)
+        )
+
+class SetupEventChannelView(discord.ui.View):
+    def __init__(self, ctx, draft_channel_id):
+        super().__init__(timeout=300)
+        self.ctx = ctx
+        self.draft_channel_id = draft_channel_id
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        placeholder="Step 2: Select scheduled events text channel",
+        channel_types=[discord.ChannelType.text],
+        min_values=1,
+        max_values=1
+    )
+    async def select_event_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
+            return
+
+        channel = select.values[0]
+        self.ctx.save_guild_config(interaction.guild.id, event_channel_id=channel.id)
+        await interaction.response.send_message(
+            f"Scheduled events channel saved: {channel.mention}\n\nNow select Team A voice channel.",
+            ephemeral=True,
+            view=SetupTeamAVoiceView(self.ctx)
+        )
+
+    @discord.ui.button(label="Use draft board channel", style=discord.ButtonStyle.secondary)
+    async def use_draft_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Only server admins can run setup.", ephemeral=True)
+            return
+
+        self.ctx.save_guild_config(interaction.guild.id, event_channel_id=self.draft_channel_id)
+        await interaction.response.send_message(
+            "Scheduled events will use the draft board channel.\n\nNow select Team A voice channel.",
             ephemeral=True,
             view=SetupTeamAVoiceView(self.ctx)
         )
@@ -37,7 +76,7 @@ class SetupTeamAVoiceView(discord.ui.View):
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
-        placeholder="Step 2: Select Team A voice channel",
+        placeholder="Step 3: Select Team A voice channel",
         channel_types=[discord.ChannelType.voice],
         min_values=1,
         max_values=1
@@ -67,7 +106,7 @@ class SetupTeamBVoiceView(discord.ui.View):
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
-        placeholder="Step 3: Select Team B voice channel",
+        placeholder="Step 4: Select Team B voice channel",
         channel_types=[discord.ChannelType.voice],
         min_values=1,
         max_values=1
@@ -97,7 +136,7 @@ class SetupAdminRoleView(discord.ui.View):
 
     @discord.ui.select(
         cls=discord.ui.RoleSelect,
-        placeholder="Step 4: Select Draft Admin role",
+        placeholder="Step 5: Select Draft Admin role",
         min_values=1,
         max_values=1
     )
@@ -126,7 +165,7 @@ class SetupOwnerRoleView(discord.ui.View):
 
     @discord.ui.select(
         cls=discord.ui.RoleSelect,
-        placeholder="Step 5: Select Owner role",
+        placeholder="Step 6: Select Owner role",
         min_values=1,
         max_values=1
     )

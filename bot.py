@@ -6,6 +6,7 @@ from config import TOKEN
 from database import init_db
 import draft_service as svc
 from views import DraftBoardView
+from scheduled_events import init_events, event_loop, EventBoard, db
 
 
 class MyBot(discord.Client):
@@ -19,6 +20,7 @@ class MyBot(discord.Client):
 
     async def setup_hook(self):
         init_db()
+        init_events()
         svc.set_bot(self)
         svc.load_players()
         register_commands(self)
@@ -26,6 +28,12 @@ class MyBot(discord.Client):
         await self.tree.sync()
 
         self.add_view(DraftBoardView(svc.get_view_context))
+        with db() as conn:
+            event_ids = [row[0] for row in conn.execute(
+                "SELECT id FROM event_occurrences WHERE message_id IS NOT NULL AND starts_at > strftime('%s','now')-86400")]
+        for event_id in event_ids:
+            self.add_view(EventBoard(event_id))
+        self.event_task = self.loop.create_task(event_loop(self))
 
 
 bot = MyBot()

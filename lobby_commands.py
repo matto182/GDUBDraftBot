@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 
 from state import get_state
+from guild_repository import is_board_hidden
 from views import DraftBoardView, CaptainPickView
 
 import draft_service as svc
@@ -66,6 +67,9 @@ def register_lobby_commands(bot):
 
     @bot.tree.command(name="draftboard", description="Post the GvG draft board with buttons.")
     async def draftboard(interaction: discord.Interaction):
+        if is_board_hidden(interaction.guild.id):
+            await interaction.response.send_message("The draft board is hidden. A draft admin can use /showlobby.", ephemeral=True)
+            return
         await interaction.response.send_message(
             embed=svc.build_draft_board_embed(interaction.guild.id),
             view=DraftBoardView(svc.get_view_context)
