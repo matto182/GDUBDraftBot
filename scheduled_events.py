@@ -11,8 +11,8 @@ from discord import app_commands
 
 from config import DB_FILE
 from database import get_guild_config
-from moderation_service import is_draft_admin
-from service_runtime import load_players, players
+from draft_service import is_draft_admin
+from draft_service import load_players, players
 
 UTC = timezone.utc
 WEEKDAYS = {name.lower(): i for i, name in enumerate(calendar.day_name)}

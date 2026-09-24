@@ -781,87 +781,35 @@ Additional permissions may be necessary depending on the server's channel overri
 
 # Project Structure
 
-The project is split into focused modules rather than a single monolithic bot file.
+The bot intentionally uses a small number of larger files. The rule is simple: when you know what kind of code you are looking for, there should be one obvious file to open.
 
 ```text
 bot.py
-    Bot startup, Discord client, events, command registration
+    Discord client startup, intents, ready/message events, persistent view registration
 
 commands.py
-    Top-level slash-command registration
-
-config.py
-    Current role configuration and compatibility normalization
-
-state.py
-    Per-guild runtime state
-
-database.py
-    Database compatibility facade
-
-database_schema.py
-    SQLite schema initialization and migrations
-
-*_repository.py
-    Focused persistence and database-query modules
-
-draft_service.py
-    Compatibility facade for draft services
-
-lobby_service.py
-    Signup, drop, voting, captain volunteering, resets, and lobby operations
-
-lobby_state_service.py
-    Persistent lobby loading/saving and waiting-room promotion
-
-draft_execution_service.py
-    Random Draft and Captain Draft execution
-
-draft_format_service.py
-    Per-server 1v1–8v8 format, capacity calculation, and lobby resizing
-
-board_service.py
-    Draft-board rendering and refresh behavior
-
-voice_service.py
-    Team voice-channel movement
-
-notification_service.py
-    Draft notification delivery
-
-player_management_service.py
-    Shared admin player-management operations
-
-player_stats_service.py
-    Player statistics calculations and formatting
-
-player_alias_service.py
-    Previous-IGN tracking and player-name handling
-
-admin_panel_*.py
-    Unified admin control-panel commands and views
-
-player_inspector_*.py
-    Admin player inspector data, service, and UI
-
-draft_history_*.py
-    Draft history repository, service, commands, and UI
-
-draft_logic.py
-    Draft-logic compatibility facade
-
-role_assignment.py
-random_draft.py
-captain_draft.py
-role_needs.py
-    Focused team-generation, composition, and role-assignment logic
+    All slash-command registration (player, lobby, admin, moderation, history, trade, setup)
 
 views.py
-    Compatibility facade for Discord UI views
+    All Discord buttons, selects, modals, setup wizard, admin panel, inspector, and history UI
 
-tests/
-    Automated regression tests
+draft_service.py
+    Runtime state and business logic: lobby, board, moderation, draft execution, player tools, notifications, history helpers, trades, and admin helpers
+
+draft_logic.py
+    Draft balancing algorithms, role assignment, team scoring, Captain Draft logic, and role-needs analysis
+
+database.py
+    SQLite schema, migrations, and all persistence/query functions
+
+scheduled_events.py
+    Scheduled event signup boards, timezone handling, recurrence, and event commands
+
+config.py
+    Environment configuration, current role definitions, and legacy role normalization
 ```
+
+There are no separate command/service/repository/view files for each small feature anymore. Sections inside the larger files preserve the original source-area names so searches remain easy.
 
 ---
 
